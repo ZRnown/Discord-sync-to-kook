@@ -3,7 +3,7 @@ FROM python:3.12-slim AS builder
 WORKDIR /app
 
 # 复制依赖文件
-COPY requirements.txt .
+COPY requirements.txt ./
 
 # 安装依赖到虚拟环境，减少镜像大小
 RUN python -m venv /opt/venv && \
@@ -25,15 +25,16 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# 复制项目文件，只复制必要的文件
-COPY bot.py discord_bot.py kook.py main.py message_forwarder.py translator.py steam_monitor.py forward_config.py cleanup.py ./
+# 复制项目代码（仅必要部分）
+COPY app ./app
+COPY requirements.txt ./requirements.txt
 
-# 创建下载目录
+# 创建下载目录与基础依赖
 RUN mkdir -p downloads/images downloads/videos && \
     apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# 启动命令
-CMD ["python", "bot.py"]
+# 默认启动应用
+CMD ["python", "-m", "app.main"]

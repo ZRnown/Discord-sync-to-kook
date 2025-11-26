@@ -1,7 +1,13 @@
 services:
   bot:
-    image: nulijiazaizhong/discord-sync-to-kook-bot:latest
+    container_name: discord-sync-to-kook-bot
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: discord-sync-to-kook:local
     volumes:
       - ./.env:/app/.env
       - ./downloads:/app/downloads
+      - ./data:/app/data
+    command: ["python", "-m", "app.main"]
     restart: unless-stopped
