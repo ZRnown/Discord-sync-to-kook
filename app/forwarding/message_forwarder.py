@@ -59,7 +59,8 @@ class MessageForwarder:
         author_name = discord_message.author.display_name
         avatar_url = await self._get_kook_avatar_url(discord_message.author)
         content = discord_message.content or ''
-        if not content and not discord_message.attachments:
+        has_embeds = bool(getattr(discord_message, 'embeds', []) or [])
+        if not content and not discord_message.attachments and not has_embeds:
             return None, None
 
         modules = []
@@ -75,7 +76,7 @@ class MessageForwarder:
             modules.append({'type': 'section', 'text': {'type': 'kmarkdown', 'content': content}})
 
         # 中间：Discord Embed 内容（镜像模式下常见）
-        embed_modules = self._build_embed_modules(discord_message)
+        embed_modules = await self._build_embed_modules(discord_message)
         modules.extend(embed_modules)
 
         # 中间：收集并内嵌媒体（多图合并展示，视频取首个）
@@ -94,7 +95,7 @@ class MessageForwarder:
         card = {'type': 'card', 'theme': 'secondary', 'modules': modules}
         return [card], embedded_ids
 
-    def _build_embed_modules(self, discord_message: discord.Message):
+    async def _build_embed_modules(self, discord_message: discord.Message):
         """将 Discord embeds 转为 KOOK 模块，避免 embed-only 消息丢失。"""
         modules = []
         for embed in getattr(discord_message, 'embeds', []) or []:
@@ -126,7 +127,9 @@ class MessageForwarder:
             image_url = getattr(getattr(embed, 'image', None), 'url', None)
             thumb_url = getattr(getattr(embed, 'thumbnail', None), 'url', None)
             for url in filter(None, [image_url, thumb_url]):
-                modules.append({'type': 'container', 'elements': [{'type': 'image', 'src': url}]})
+                mirrored = await self._mirror_embed_asset(url)
+                if mirrored:
+                    modules.append({'type': 'container', 'elements': [{'type': 'image', 'src': mirrored}]})
 
             # Footer 时间信息
             footer_text = getattr(getattr(embed, 'footer', None), 'text', None)
@@ -139,6 +142,43 @@ class MessageForwarder:
             if footer_elements:
                 modules.append({'type': 'context', 'elements': footer_elements})
         return modules
+
+    async def _mirror_embed_asset(self, url: str) -> Optional[str]:
+        """下载 Discord embed 图片并上传为 KOOK 资产，确保 KOOK 可访问。"""
+        if not url:
+            return None
+        try:
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        print(f"[Embed] 下载失败 status={resp.status} url={url}")
+                        return None
+                    data = await resp.read()
+                    content_type = resp.headers.get('Content-Type') or 'application/octet-stream'
+            from dotenv import load_dotenv
+            load_dotenv()
+            token = os.getenv('KOOK_BOT_TOKEN')
+            if not token:
+                return None
+            upload_url = 'https://www.kookapp.cn/api/v3/asset/create'
+            headers = {'Authorization': f'Bot {token}'}
+            async with aiohttp.ClientSession() as session:
+                form = aiohttp.FormData()
+                filename = os.path.basename(url.split('?')[0]) or 'embed_asset'
+                form.add_field('file', data, filename=filename, content_type=content_type)
+                form.add_field('type', '1')
+                async with session.post(upload_url, headers=headers, data=form) as response:
+                    if response.status == 200:
+                        resp_json = await response.json()
+                        if resp_json.get('code') == 0 and resp_json.get('data', {}).get('url'):
+                            return resp_json['data']['url']
+                        print(f"[Embed] 上传返回异常: {resp_json}")
+                    else:
+                        print(f"[Embed] 上传失败 HTTP={response.status}")
+        except Exception as e:
+            print(f"[Embed] 处理异常: {e}")
+        return None
 
     async def _get_kook_avatar_url(self, user: discord.User) -> Optional[str]:
         try:
