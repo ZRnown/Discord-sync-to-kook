@@ -74,6 +74,10 @@ class MessageForwarder:
         if content:
             modules.append({'type': 'section', 'text': {'type': 'kmarkdown', 'content': content}})
 
+        # 中间：Discord Embed 内容（镜像模式下常见）
+        embed_modules = self._build_embed_modules(discord_message)
+        modules.extend(embed_modules)
+
         # 中间：收集并内嵌媒体（多图合并展示，视频取首个）
         media_modules, embedded_ids = await self._collect_media_modules(discord_message)
         modules.extend(media_modules)
@@ -89,6 +93,52 @@ class MessageForwarder:
 
         card = {'type': 'card', 'theme': 'secondary', 'modules': modules}
         return [card], embedded_ids
+
+    def _build_embed_modules(self, discord_message: discord.Message):
+        """将 Discord embeds 转为 KOOK 模块，避免 embed-only 消息丢失。"""
+        modules = []
+        for embed in getattr(discord_message, 'embeds', []) or []:
+            title = embed.title or ''
+            description = embed.description or ''
+            body_lines = []
+            if title:
+                body_lines.append(f"**{title}**")
+            if description:
+                body_lines.append(description)
+            if body_lines:
+                modules.append({'type': 'section', 'text': {'type': 'kmarkdown', 'content': '\n\n'.join(body_lines)}})
+
+            field_lines = []
+            for field in getattr(embed, 'fields', []):
+                name = field.name or ''
+                value = field.value or ''
+                segment = ""
+                if name:
+                    segment += f"**{name}**\n"
+                if value:
+                    segment += value
+                if segment:
+                    field_lines.append(segment)
+            if field_lines:
+                modules.append({'type': 'section', 'text': {'type': 'kmarkdown', 'content': '\n\n'.join(field_lines)}})
+
+            # 图片 | 缩略图
+            image_url = getattr(getattr(embed, 'image', None), 'url', None)
+            thumb_url = getattr(getattr(embed, 'thumbnail', None), 'url', None)
+            for url in filter(None, [image_url, thumb_url]):
+                modules.append({'type': 'container', 'elements': [{'type': 'image', 'src': url}]})
+
+            # Footer 时间信息
+            footer_text = getattr(getattr(embed, 'footer', None), 'text', None)
+            timestamp = embed.timestamp
+            footer_elements = []
+            if footer_text:
+                footer_elements.append({'type': 'kmarkdown', 'content': footer_text})
+            if timestamp:
+                footer_elements.append({'type': 'kmarkdown', 'content': timestamp.strftime('%Y-%m-%d %H:%M')})
+            if footer_elements:
+                modules.append({'type': 'context', 'elements': footer_elements})
+        return modules
 
     async def _get_kook_avatar_url(self, user: discord.User) -> Optional[str]:
         try:
