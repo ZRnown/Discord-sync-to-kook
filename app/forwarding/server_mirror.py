@@ -97,7 +97,7 @@ class ChannelMirror:
             kc_id = await self._find_existing_kook_channel(name)
             if not kc_id:
                 # Create text channel in KOOK when no existing channel can be reused
-                kc_id = await self._create_kook_text_channel(name)
+            kc_id = await self._create_kook_text_channel(name)
             if kc_id:
                 dc_cat = str(discord_channel.category_id) if getattr(discord_channel, 'category_id', None) else None
                 self.save_mapping(dc_id, kc_id, dc_cat, None, discord_channel.name)
