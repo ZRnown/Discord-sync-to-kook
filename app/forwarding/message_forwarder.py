@@ -99,6 +99,25 @@ class MessageForwarder:
         """将 Discord embeds 转为 KOOK 模块，避免 embed-only 消息丢失。"""
         modules = []
         for embed in getattr(discord_message, 'embeds', []) or []:
+            # 作者信息（含头像）
+            author = getattr(embed, 'author', None)
+            author_name = getattr(author, 'name', None) if author else None
+            author_icon = getattr(author, 'icon_url', None) if author else None
+            if author_name or author_icon:
+                author_elements = []
+                if author_icon:
+                    print(f"[Embed] 开始镜像作者头像: {author_icon}")
+                    mirrored_icon = await self._mirror_embed_asset(author_icon)
+                    if mirrored_icon:
+                        author_elements.append({'type': 'image', 'src': mirrored_icon})
+                        print(f"[Embed] 镜像作者头像成功")
+                    else:
+                        print(f"[Embed] 镜像作者头像失败")
+                if author_name:
+                    author_elements.append({'type': 'plain-text', 'content': author_name})
+                if author_elements:
+                    modules.append({'type': 'context', 'elements': author_elements})
+
             title = embed.title or ''
             description = embed.description or ''
             body_lines = []
@@ -148,6 +167,7 @@ class MessageForwarder:
         if not url:
             return None
         try:
+            print(f"[Embed] 下载资源: {url}")
             timeout = aiohttp.ClientTimeout(total=20)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url) as resp:
@@ -160,6 +180,7 @@ class MessageForwarder:
             load_dotenv()
             token = os.getenv('KOOK_BOT_TOKEN')
             if not token:
+                print("[Embed] KOOK_BOT_TOKEN 未配置，无法上传资产")
                 return None
             upload_url = 'https://www.kookapp.cn/api/v3/asset/create'
             headers = {'Authorization': f'Bot {token}'}
@@ -172,6 +193,7 @@ class MessageForwarder:
                     if response.status == 200:
                         resp_json = await response.json()
                         if resp_json.get('code') == 0 and resp_json.get('data', {}).get('url'):
+                            print(f"[Embed] 上传成功 -> {resp_json['data']['url']}")
                             return resp_json['data']['url']
                         print(f"[Embed] 上传返回异常: {resp_json}")
                     else:
@@ -186,10 +208,13 @@ class MessageForwarder:
             if uid in self.avatar_cache:
                 return self.avatar_cache[uid]
             if not hasattr(user, 'display_avatar') or not user.display_avatar:
+                print(f"[Avatar] 用户 {uid} 无 display_avatar")
                 return None
             src_url = str(user.display_avatar.url)
             if not src_url:
+                print(f"[Avatar] 用户 {uid} display_avatar.url 为空")
                 return None
+            print(f"[Avatar] 下载 Discord 头像: user={uid} url={src_url}")
             timeout = aiohttp.ClientTimeout(total=15)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(src_url) as resp:
