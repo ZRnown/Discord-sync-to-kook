@@ -57,6 +57,12 @@ class Settings:
                         'inst_id': inst.strip()
                     }
 
+        # Mirror settings
+        self.MIRROR_ENABLED = os.getenv('MIRROR_ENABLED', 'false').lower() == 'true'
+        self.DISCORD_GUILD_ID = os.getenv('DISCORD_GUILD_ID')
+        self.KOOK_GUILD_ID = os.getenv('KOOK_GUILD_ID')
+        self.MIRROR_CHANNEL_PREFIX = os.getenv('MIRROR_CHANNEL_PREFIX', '')
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()

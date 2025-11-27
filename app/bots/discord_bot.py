@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord.ext import tasks
 from discord import app_commands
 from app.forwarding.message_forwarder import MessageForwarder
+from app.forwarding.server_mirror import ChannelMirror
 from app.config.settings import get_settings
 
 class MembershipCog(commands.Cog):
@@ -267,9 +268,11 @@ def create_discord_bot(token, config=None):
 
 def setup_discord_bot(bot, token, kook_bot=None):
     forwarder = None
+    mirror = None
     if kook_bot:
         forwarder = MessageForwarder(kook_bot)
         print("✅ 消息转发器已初始化")
+        mirror = ChannelMirror()
 
     @bot.event
     async def setup_hook():
@@ -283,6 +286,11 @@ def setup_discord_bot(bot, token, kook_bot=None):
         except Exception as e:
             print(f'setup_hook 初始化出错: {e}')
 
+        # 初始镜像（可选，仅提示）
+        settings = get_settings()
+        if settings.MIRROR_ENABLED:
+            print("[Mirror] 镜像模式已启用，收到消息时将自动创建并映射 KOOK 频道")
+
     @bot.event
     async def on_ready():
         print(f'{bot.user} 已成功登录！')
@@ -294,10 +302,23 @@ def setup_discord_bot(bot, token, kook_bot=None):
             return
         if forwarder:
             try:
-                await forwarder.forward_message(message)
+                override = None
+                settings = get_settings()
+                if settings.MIRROR_ENABLED and mirror:
+                    override = await mirror.ensure_mapped(message.channel)
+                await forwarder.forward_message(message, override_kook_channel_id=override)
             except Exception as e:
                 print(f"❌ 转发消息时出错: {e}")
         await bot.process_commands(message)
+
+    @bot.event
+    async def on_guild_channel_create(channel):
+        try:
+            settings = get_settings()
+            if settings.MIRROR_ENABLED and mirror:
+                await mirror.ensure_mapped(channel)
+        except Exception as e:
+            print(f"[Mirror] 频道创建事件处理异常: {e}")
 
     @bot.tree.command(name='ping', description='检查机器人延迟')
     async def ping(interaction: discord.Interaction):

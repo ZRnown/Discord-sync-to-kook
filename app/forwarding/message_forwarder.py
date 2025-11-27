@@ -22,17 +22,17 @@ class MessageForwarder:
         self.avatar_cache = {}
         # 翻译功能已移除
 
-    async def forward_message(self, discord_message: discord.Message) -> bool:
+    async def forward_message(self, discord_message: discord.Message, override_kook_channel_id: Optional[str] = None) -> bool:
         try:
             if not self.config.should_forward_message(discord_message.author.bot):
                 print(f"[Forward] 跳过机器人消息: author_bot={discord_message.author.bot}")
                 return False
-            kook_channel_id = self.config.get_kook_channel_id(str(discord_message.channel.id))
+            kook_channel_id = override_kook_channel_id or self.config.get_kook_channel_id(str(discord_message.channel.id))
             if not kook_channel_id:
                 print(f"[Forward] 未找到映射规则: discord_channel={discord_message.channel.id}")
                 return False
             print(f"[Forward] 命中规则: {discord_message.channel.id} -> {kook_channel_id}")
-            forwarded_card = await self._build_forward_card(discord_message)
+            forwarded_card, embedded_attachment_ids = await self._build_forward_card(discord_message)
             success = False
             if forwarded_card:
                 sent = await self._send_card_message(kook_channel_id, forwarded_card)
@@ -45,7 +45,9 @@ class MessageForwarder:
                     if fallback:
                         await self._send_text_message(kook_channel_id, fallback)
             if discord_message.attachments:
-                await self._forward_attachments(discord_message, kook_channel_id)
+                # 跳过已内嵌到卡片中的附件（若有）
+                skip_ids = set(embedded_attachment_ids or [])
+                await self._forward_attachments(discord_message, kook_channel_id, skip_ids=skip_ids)
                 print(f"[Forward] 附件发送完成 -> KOOK:{kook_channel_id}")
                 success = True
             return success
@@ -53,36 +55,40 @@ class MessageForwarder:
             print(f"转发消息失败: {e}")
             return False
 
-    async def _build_forward_card(self, discord_message: discord.Message) -> Optional[list]:
+    async def _build_forward_card(self, discord_message: discord.Message) -> Optional[tuple]:
         author_name = discord_message.author.display_name
-        # 头像通过 KOOK 资产上传后再引用，避免外链校验失败
         avatar_url = await self._get_kook_avatar_url(discord_message.author)
         content = discord_message.content or ''
-        # 无文本则不发送卡片（仅转发附件）
-        if not content:
-            return None
-        # 构建 KOOK 卡片，展示头像+昵称+内容
-        card = {
-            'type': 'card',
-            'theme': 'secondary',
-            'size': 'lg',
-            'modules': [
-                {
-                    'type': 'section',
-                    'text': {'type': 'kmarkdown', 'content': f"**{author_name}**"},
-                    'accessory': {'type': 'image', 'src': avatar_url, 'size': 'sm'} if avatar_url else None
-                },
-                {'type': 'divider'},
-                {
-                    'type': 'section',
-                    'text': {'type': 'kmarkdown', 'content': content or ''}
-                }
-            ]
-        }
-        # 清理 None accessory
-        if card['modules'][0].get('accessory') is None:
-            card['modules'][0].pop('accessory', None)
-        return [card]
+        if not content and not discord_message.attachments:
+            return None, None
+
+        modules = []
+        # 顶部：使用 context 放置更小的头像 + 用户名
+        top_elements = []
+        if avatar_url:
+            top_elements.append({'type': 'image', 'src': avatar_url})  # context 的 image 无需 size，展示更小
+        top_elements.append({'type': 'plain-text', 'content': f"{author_name}"})
+        modules.append({'type': 'context', 'elements': top_elements})
+
+        # 中间：文本内容（如有）
+        if content:
+            modules.append({'type': 'section', 'text': {'type': 'kmarkdown', 'content': content}})
+
+        # 中间：收集并内嵌媒体（多图合并展示，视频取首个）
+        media_modules, embedded_ids = await self._collect_media_modules(discord_message)
+        modules.extend(media_modules)
+
+        # 底部：Discord 小图标 + 日期（小号字体）
+        ts_str = self._format_cn_datetime(discord_message)
+        footer_elements = []
+        icon_url = os.getenv('DISCORD_ICON_URL', '').strip()
+        if icon_url:
+            footer_elements.append({'type': 'image', 'src': icon_url})
+        footer_elements.append({'type': 'kmarkdown', 'content': f"Discord · {ts_str}"})
+        modules.append({'type': 'context', 'elements': footer_elements})
+
+        card = {'type': 'card', 'theme': 'secondary', 'modules': modules}
+        return [card], embedded_ids
 
     async def _get_kook_avatar_url(self, user: discord.User) -> Optional[str]:
         try:
@@ -186,9 +192,12 @@ class MessageForwarder:
             print(f"❌ 发送卡片异常: {e}")
         return False
 
-    async def _forward_attachments(self, discord_message: discord.Message, kook_channel_id: str):
+    async def _forward_attachments(self, discord_message: discord.Message, kook_channel_id: str, skip_ids: Optional[set] = None):
         """转发附件到KOOK"""
+        skip_ids = skip_ids or set()
         for attachment in discord_message.attachments:
+            if attachment.id in skip_ids:
+                continue
             try:
                 file_path = await self._download_attachment(attachment)
                 if file_path:
@@ -196,6 +205,93 @@ class MessageForwarder:
                     await self._schedule_file_cleanup(file_path, attachment.content_type)
             except Exception as e:
                 print(f"❌ 转发附件失败 {attachment.filename}: {e}")
+
+    async def _collect_media_modules(self, discord_message: discord.Message) -> tuple:
+        """上传并构建媒体模块：
+        - 多张图片：合并到一个 container 内的多个 image 元素
+        - 视频：仅取首个视频，使用 video 模块
+        返回 (modules, embedded_attachment_ids)
+        """
+        images = []
+        videos = []
+        embedded_ids = []
+        for att in discord_message.attachments:
+            ctype = (att.content_type or '')
+            if ctype.startswith('image/'):
+                images.append(att)
+            elif ctype.startswith('video/'):
+                videos.append(att)
+
+        modules = []
+        # 处理图片（全部合并展示）
+        if images:
+            image_elements = []
+            for img in images:
+                url = await self._upload_attachment_and_get_url(img)
+                if url:
+                    image_elements.append({'type': 'image', 'src': url})
+                    embedded_ids.append(img.id)
+            if image_elements:
+                modules.append({'type': 'container', 'elements': image_elements})
+
+        # 处理视频（仅第一个）
+        if videos:
+            first_v = videos[0]
+            v_url = await self._upload_attachment_and_get_url(first_v)
+            if v_url:
+                modules.append({'type': 'video', 'title': first_v.filename, 'src': v_url})
+                embedded_ids.append(first_v.id)
+
+        return modules, embedded_ids
+
+    async def _upload_attachment_and_get_url(self, attachment: discord.Attachment) -> Optional[str]:
+        """下载并上传单个附件到 KOOK 资产，返回 URL。"""
+        try:
+            file_path = await self._download_attachment(attachment)
+            if not file_path:
+                return None
+            from dotenv import load_dotenv
+            load_dotenv()
+            token = os.getenv('KOOK_BOT_TOKEN')
+            upload_url = 'https://www.kookapp.cn/api/v3/asset/create'
+            headers = {'Authorization': f'Bot {token}'}
+
+            content_type, _ = mimetypes.guess_type(file_path)
+            if not content_type:
+                content_type = 'application/octet-stream'
+
+            file_type = 1
+            if self._is_video_file(file_path):
+                file_type = 2
+            else:
+                if not content_type.startswith('image/'):
+                    file_type = 3
+
+            async with aiohttp.ClientSession() as session:
+                with open(file_path, 'rb') as f:
+                    form = aiohttp.FormData()
+                    form.add_field('file', f, filename=attachment.filename, content_type=content_type)
+                    form.add_field('type', str(file_type))
+                    async with session.post(upload_url, headers=headers, data=form) as response:
+                        if response.status == 200:
+                            resp_json = await response.json()
+                            if resp_json.get('code') == 0 and resp_json.get('data', {}).get('url'):
+                                return resp_json['data']['url']
+            return None
+        except Exception as e:
+            print(f"❌ 上传附件失败(获取URL): {e}")
+            return None
+
+    def _format_cn_datetime(self, discord_message: discord.Message) -> str:
+        try:
+            ts = discord_message.created_at
+            # 尝试中文格式化，如 2023年1月3日 09:27
+            try:
+                return ts.strftime('%Y年%-m月%-d日 %H:%M')
+            except Exception:
+                return ts.strftime('%Y年%m月%d日 %H:%M')
+        except Exception:
+            return time.strftime('%Y年%m月%d日 %H:%M', time.localtime())
 
     async def _download_attachment(self, attachment: discord.Attachment) -> Optional[Path]:
         try:
@@ -295,7 +391,6 @@ class MessageForwarder:
         card = {
             'type': 'card',
             'theme': 'secondary',
-            'size': 'lg',
             'modules': [
                 {'type': 'header', 'text': {'type': 'plain-text', 'content': f"图片: {original_filename}"}},
                 {'type': 'container', 'elements': [{'type': 'image', 'src': image_url}]}
@@ -325,7 +420,6 @@ class MessageForwarder:
         card = {
             'type': 'card',
             'theme': 'secondary',
-            'size': 'lg',
             'modules': [
                 {'type': 'header', 'text': {'type': 'plain-text', 'content': f"视频: {original_filename}"}},
                 {'type': 'video', 'title': original_filename, 'src': video_url}

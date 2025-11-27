@@ -5,7 +5,7 @@ from app.config.settings import get_settings
 from .client import OKXClient
 from .copy_trading import OKXCopyTrading
 
-class OKXStateCache:
+class OKsmtateCache:
     """简单轮询缓存：instId -> last_price, uniqueCode -> current_positions"""
     def __init__(self):
         self.settings = get_settings()
@@ -47,7 +47,7 @@ class OKXStateCache:
                     data = self.copy.get_current_positions(code)
                     self.positions[code] = data or []
             except Exception as e:
-                print(f"OKXStateCache轮询异常: {e}")
+                print(f"OKsmtateCache轮询异常: {e}")
             time.sleep(interval)
 
     def _get_bindings(self):
