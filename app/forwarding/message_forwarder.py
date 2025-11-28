@@ -4,28 +4,43 @@ import os
 import time
 import json
 import mimetypes
+from datetime import datetime
+from builtins import print as builtin_print
 from pathlib import Path
 from typing import List, Optional
 import discord
 from khl import Bot as KookBot
 from app.config.forward_config import ForwardConfig
 
+
+def print(*args, **kwargs):  # noqa: A001
+    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if args:
+        args = (f"[{ts}] {args[0]}",) + args[1:]
+    else:
+        args = (f"[{ts}]",)
+    return builtin_print(*args, **kwargs)
+
 class MessageForwarder:
     def __init__(self, kook_bot: KookBot):
         self.kook_bot = kook_bot
         self.config = ForwardConfig()
+        self.settings = self.config.settings
         self.download_dir = Path('downloads')
         self.download_dir.mkdir(exist_ok=True)
         (self.download_dir / 'images').mkdir(exist_ok=True)
         (self.download_dir / 'videos').mkdir(exist_ok=True)
         # 简易头像缓存：user_id -> kook_asset_url
         self.avatar_cache = {}
+        self._kook_access_checked = False
         # 翻译功能已移除
 
     async def forward_message(self, discord_message: discord.Message, override_kook_channel_id: Optional[str] = None) -> bool:
         try:
             if not self.config.should_forward_message(discord_message.author.bot):
                 print(f"[Forward] 跳过机器人消息: author_bot={discord_message.author.bot}")
+                return False
+            if not await self._ensure_kook_access():
                 return False
             kook_channel_id = override_kook_channel_id or self.config.get_kook_channel_id(str(discord_message.channel.id))
             if not kook_channel_id:
@@ -94,6 +109,49 @@ class MessageForwarder:
 
         card = {'type': 'card', 'theme': 'secondary', 'modules': modules}
         return [card], embedded_ids
+
+    async def _ensure_kook_access(self) -> bool:
+        """Validate KOOK guild/token to avoid反复触发 400/403."""
+        if self._kook_access_checked:
+            return True
+        guild_id = getattr(self.settings, 'KOOK_GUILD_ID', None)
+        if not guild_id:
+            print("[Forward] ❌ KOOK_GUILD_ID 未配置，无法向 KOOK 发送消息")
+            return False
+        from dotenv import load_dotenv
+        load_dotenv()
+        token = os.getenv('KOOK_BOT_TOKEN')
+        if not token:
+            print("[Forward] ❌ KOOK_BOT_TOKEN 未配置，无法向 KOOK 发送消息")
+            return False
+        url = 'https://www.kookapp.cn/api/v3/channel/list'
+        headers = {
+            'Authorization': f'Bot {token}',
+            'Content-Type': 'application/json'
+        }
+        params = {'guild_id': guild_id, 'page_size': 1}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, params=params) as resp:
+                    data = await resp.json()
+                    if resp.status == 200 and data.get('code') == 0:
+                        self._kook_access_checked = True
+                        print(f"[Forward] ✅ 验证 KOOK 权限通过 (guild_id={guild_id})")
+                        return True
+                    print(f"[Forward] ❌ KOOK 权限校验失败 status={resp.status}, body={data}")
+                    print("[Forward] 提示: 确认 .env 中 KOOK_GUILD_ID 是 KOOK 服务器 ID，"
+                          "且当前 KOOK_BOT_TOKEN 已加入该服务器并拥有发言权限。")
+        except Exception as e:
+            print(f"[Forward] ❌ 验证 KOOK 权限异常: {e}")
+        self._kook_access_checked = False
+        return False
+
+    def _handle_kook_permission_error(self, stage: str, status: int, resp_json: dict):
+        """统一提示 KOOK 权限配置问题。"""
+        self._kook_access_checked = False
+        print(f"[Forward] ❌ {stage} 被 KOOK 拒绝: status={status}, body={resp_json}")
+        print("[Forward] 提示: 请确认 KOOK_BOT_TOKEN 对应机器人已经加入 KOOK_GUILD_ID"
+              " 指定的服务器，并在目标频道拥有发送消息权限。")
 
     async def _build_embed_modules(self, discord_message: discord.Message):
         """将 Discord embeds 转为 KOOK 模块，避免 embed-only 消息丢失。"""
@@ -282,6 +340,8 @@ class MessageForwarder:
                         print(f"[KOOK] 文本发送成功 -> channel={kook_channel_id}")
                         return
                     print(f"⚠️ 文本发送失败: status={response.status}, body={resp_json}")
+                    if response.status in (400, 401, 403):
+                        self._handle_kook_permission_error("文本消息", response.status, resp_json)
         except Exception as e:
             print(f"❌ 文本API请求异常: {e}")
 
@@ -303,6 +363,8 @@ class MessageForwarder:
                         print(f"[KOOK] 卡片发送成功 -> channel={kook_channel_id}")
                         return True
                     print(f"⚠️ 卡片发送失败: status={response.status}, body={resp_json}")
+                    if response.status in (400, 401, 403):
+                        self._handle_kook_permission_error("卡片消息", response.status, resp_json)
         except Exception as e:
             print(f"❌ 发送卡片异常: {e}")
         return False

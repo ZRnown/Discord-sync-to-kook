@@ -3,13 +3,26 @@ import time
 import aiohttp
 import os
 from typing import Optional
+from datetime import datetime
+from builtins import print as builtin_print
 from app.config.settings import get_settings
+
+
+def print(*args, **kwargs):  # noqa: A001 - module-scoped print override
+    """Inject timestamp into every log line from this module."""
+    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if args:
+        args = (f"[{ts}] {args[0]}",) + args[1:]
+    else:
+        args = (f"[{ts}]",)
+    return builtin_print(*args, **kwargs)
 
 class ChannelMirror:
     def __init__(self):
         self.settings = get_settings()
         from app.services.membership.store import MembershipStore
         self.store = MembershipStore()
+        self._kook_access_checked = False
         self._init_table()
 
     def _init_table(self):
@@ -125,6 +138,8 @@ class ChannelMirror:
                 return None
             if not self.settings.KOOK_GUILD_ID:
                 print("[Mirror] KOOK_GUILD_ID 未配置，跳过镜像创建")
+                return None
+            if not await self._ensure_kook_access():
                 return None
             dc_id = str(discord_channel.id)
             dc_name = discord_channel.name
@@ -380,3 +395,41 @@ class ChannelMirror:
             import traceback
             traceback.print_exc()
         return None
+
+    async def _ensure_kook_access(self) -> bool:
+        """Check KOOK guild/token validity and cache success."""
+        if self._kook_access_checked:
+            return True
+        guild_id = self.settings.KOOK_GUILD_ID
+        if not guild_id:
+            print("[Mirror] ❌ KOOK_GUILD_ID 未配置，无法访问 KOOK 服务器")
+            return False
+        from dotenv import load_dotenv
+        load_dotenv()
+        token = os.getenv('KOOK_BOT_TOKEN')
+        if not token:
+            print("[Mirror] ❌ KOOK_BOT_TOKEN 未配置，无法访问 KOOK 服务器")
+            return False
+        url = 'https://www.kookapp.cn/api/v3/channel/list'
+        headers = {
+            'Authorization': f'Bot {token}',
+            'Content-Type': 'application/json'
+        }
+        params = {'guild_id': guild_id, 'page_size': 1}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, params=params) as resp:
+                    data = await resp.json()
+                    if resp.status == 200 and data.get('code') == 0:
+                        self._kook_access_checked = True
+                        print(f"[Mirror] ✅ 验证 KOOK 权限通过 (guild_id={guild_id})")
+                        return True
+                    print(f"[Mirror] ❌ KOOK 权限校验失败 status={resp.status}, body={data}")
+                    print("[Mirror] 提示: 确认 .env 中 KOOK_GUILD_ID 为 KOOK 服务器 ID，"
+                          "机器人已加入该服务器且拥有建频道/发言权限。")
+        except Exception as e:
+            print(f"[Mirror] ❌ 验证 KOOK 权限异常: {e}")
+            import traceback
+            traceback.print_exc()
+        self._kook_access_checked = False
+        return False
