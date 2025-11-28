@@ -85,23 +85,28 @@ class ChannelMirror:
                 print("[Mirror] KOOK_GUILD_ID 未配置，跳过镜像创建")
                 return None
             dc_id = str(discord_channel.id)
+            dc_name = discord_channel.name
+            print(f"[Mirror] 检查频道映射: DC#{dc_name} (id={dc_id})")
             existed = self.get_mapped(dc_id)
             if existed:
+                print(f"[Mirror] ✅ 数据库已有映射: DC#{dc_name} -> KOOK:{existed}")
                 return existed
             # Build name with optional prefix
-            name = discord_channel.name
+            name = dc_name
             prefix = (self.settings.MIRROR_CHANNEL_PREFIX or '').strip()
             if prefix:
                 name = f"{prefix}{name}"
+                print(f"[Mirror] 应用前缀后名称: '{name}' (原名称: '{dc_name}', 前缀: '{prefix}')")
             # Try to reuse existing KOOK channel (防止重复创建)
             kc_id = await self._find_existing_kook_channel(name)
             if not kc_id:
+                print(f"[Mirror] 未找到已存在频道，准备创建新频道: '{name}'")
                 # Create text channel in KOOK when no existing channel can be reused
                 kc_id = await self._create_kook_text_channel(name)
             if kc_id:
                 dc_cat = str(discord_channel.category_id) if getattr(discord_channel, 'category_id', None) else None
                 self.save_mapping(dc_id, kc_id, dc_cat, None, discord_channel.name)
-                print(f"[Mirror] 创建并映射频道: DC#{discord_channel.name} -> KOOK:{kc_id}")
+                print(f"[Mirror] ✅ 保存映射: DC#{discord_channel.name} -> KOOK:{kc_id}")
                 return kc_id
             return None
         except Exception as e:
@@ -125,19 +130,24 @@ class ChannelMirror:
             'name': name,
             'type': 1  # text
         }
+        print(f"[Mirror] 正在创建 KOOK 频道: name='{name}', guild_id={self.settings.KOOK_GUILD_ID}")
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, headers=headers, json=payload) as resp:
                     data = await resp.json()
+                    print(f"[Mirror] 创建频道 API 响应: status={resp.status}, code={data.get('code')}, body={data}")
                     if resp.status == 200 and data.get('code') == 0:
                         kid = str(data.get('data', {}).get('id') or data.get('data', {}).get('channel_id'))
                         if kid:
+                            print(f"[Mirror] ✅ 成功创建 KOOK 频道: {kid} ({name})")
                             return kid
-                        print(f"[Mirror] 创建频道返回无ID: {data}")
+                        print(f"[Mirror] ⚠️ 创建频道返回无ID: {data}")
                     else:
-                        print(f"[Mirror] 创建频道失败 status={resp.status} body={data}")
+                        print(f"[Mirror] ❌ 创建频道失败 status={resp.status} body={data}")
         except Exception as e:
-            print(f"[Mirror] 创建频道请求异常: {e}")
+            print(f"[Mirror] ❌ 创建频道请求异常: {e}")
+            import traceback
+            traceback.print_exc()
         return None
 
     async def _find_existing_kook_channel(self, name: str) -> Optional[str]:
@@ -146,6 +156,7 @@ class ChannelMirror:
         load_dotenv()
         token = os.getenv('KOOK_BOT_TOKEN')
         if not token:
+            print(f"[Mirror] 查找频道失败: KOOK_BOT_TOKEN 未配置")
             return None
         url = 'https://www.kookapp.cn/api/v3/channel/list'
         headers = {
@@ -155,21 +166,33 @@ class ChannelMirror:
         params = {
             'guild_id': self.settings.KOOK_GUILD_ID
         }
+        print(f"[Mirror] 开始查找已存在的 KOOK 频道，目标名称: '{name}'")
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, params=params) as resp:
                     data = await resp.json()
+                    print(f"[Mirror] 频道列表 API 响应: status={resp.status}, code={data.get('code')}")
                     if resp.status == 200 and data.get('code') == 0:
                         # KOOK 可能返回 data.items 或 data
                         channels = data.get('data', {}).get('items') or data.get('data', [])
+                        if not isinstance(channels, list):
+                            channels = []
+                        print(f"[Mirror] 找到 {len(channels)} 个 KOOK 频道，开始匹配...")
                         for ch in channels:
-                            if str(ch.get('name')) == name:
-                                kid = ch.get('id') or ch.get('channel_id')
-                                if kid:
-                                    print(f"[Mirror] 复用已有 KOOK 频道 {kid} ({name})")
-                                    return str(kid)
+                            ch_name = str(ch.get('name', ''))
+                            ch_id = ch.get('id') or ch.get('channel_id')
+                            print(f"[Mirror] 检查频道: id={ch_id}, name='{ch_name}' (目标: '{name}')")
+                            if ch_name == name:
+                                if ch_id:
+                                    print(f"[Mirror] ✅ 匹配成功！复用已有 KOOK 频道 {ch_id} ({name})")
+                                    return str(ch_id)
+                                else:
+                                    print(f"[Mirror] ⚠️ 名称匹配但无ID: {ch}")
+                        print(f"[Mirror] ❌ 未找到匹配的频道，将创建新频道")
                     else:
                         print(f"[Mirror] 查询频道列表失败 status={resp.status} body={data}")
         except Exception as e:
             print(f"[Mirror] 查询现有频道异常: {e}")
+            import traceback
+            traceback.print_exc()
         return None
