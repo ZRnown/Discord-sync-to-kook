@@ -6,7 +6,8 @@ __pycache__/
 # 虚拟环境
 env/
 ENV/
-venv
+venv/
+.venv/
 # 环境变量文件（包含敏感信息）
 .env
 
@@ -38,4 +39,8 @@ Thumbs.db
 *.dll
 *.exe
 
+# 数据库文件
 *.db
+*.sqlite
+*.sqlite3
+data/
