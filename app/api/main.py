@@ -315,10 +315,18 @@ async def get_trades(
                 (trade_id,)
             ).fetchone()
             
+            # 判断交易是否已结束
+            is_ended = False
             if latest_update:
                 status = latest_update[0]
+                is_ended = True
                 if latest_update[1]:
                     pnl_points = float(latest_update[1])
+                    # 重新计算盈亏百分比（基于最终盈亏点数）
+                    if entry_price and entry_price > 0:
+                        pnl_percent = (pnl_points / entry_price) * 100
+            elif status and status in ['已止盈', '已止损', '带单主动止盈', '带单主动止损']:
+                is_ended = True
             
             # 获取带单员信息
             trader = trader_config.get_trader_by_id(trader_id) if trader_id else None
@@ -328,11 +336,14 @@ async def get_trades(
             if not status:
                 status = "未进场"
             
-            # 如果交易已结束，不再更新价格和状态（保持最终状态）
-            is_ended = status in ["已止盈", "已止损", "带单主动止盈", "带单主动止损"]
-            
-            # 如果没有当前价格且交易未结束，尝试从OKX获取（仅用于显示，前端会进行计算）
-            if not current_price and symbol and not is_ended:
+            # 如果交易已结束，不再更新价格和重新计算（保持最终状态）
+            if is_ended:
+                # 已结束的交易，不再获取实时价格，使用已保存的最终价格
+                # 如果trade_status_detail中有价格，使用它；否则使用entry_price作为显示
+                if not current_price:
+                    current_price = entry_price  # 使用进场价作为显示，不再实时更新
+            elif not current_price and symbol:
+                # 如果交易未结束，尝试从OKX获取当前价格用于计算
                 price = okx_cache.get_price(symbol)
                 if price:
                     current_price = float(price)

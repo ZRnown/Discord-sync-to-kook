@@ -506,16 +506,6 @@ class MonitorCog(commands.Cog):
                 for trade_row in active_trades:
                     trade_id, trader_id, channel_id, symbol, side, entry_price, take_profit, stop_loss = trade_row
                     
-                    # 检查交易单是否已结束（从trade_status_detail表）
-                    status_check = con.execute(
-                        "SELECT status FROM trade_status_detail WHERE trade_id=?",
-                        (trade_id,)
-                    ).fetchone()
-                    
-                    # 如果交易已结束，跳过更新（保持最终状态）
-                    if status_check and status_check[0] in ["已止盈", "已止损", "带单主动止盈", "带单主动止损"]:
-                        continue
-                    
                     # 获取实时价格
                     current_price = self.okx_cache.get_price(symbol)
                     if not current_price:

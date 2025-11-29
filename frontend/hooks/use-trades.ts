@@ -40,24 +40,13 @@ const fetcher = async (url: string) => {
   return data
 }
 
-export function useTrades(channelId?: string, traderId?: string) {
-  let url = "/api/trades"
-  const params = new URLSearchParams()
-  if (channelId) params.append("channel_id", channelId)
-  if (traderId) params.append("trader_id", traderId)
-  if (params.toString()) url += `?${params.toString()}`
-  
+export function useTrades(channelId?: string) {
+  const url = channelId ? `/api/trades?channel_id=${channelId}` : "/api/trades"
   const { data, error, isLoading, mutate } = useSWR<TradesResponse>(
     url,
     fetcher,
     {
-    refreshInterval: (latestData) => {
-      // 如果所有交易单都已结束，停止自动刷新
-      const hasActiveTrades = latestData?.data?.some(
-        (trade) => !["已止盈", "已止损", "带单主动止盈", "带单主动止损"].includes(trade.status)
-      )
-      return hasActiveTrades ? 3000 : 0 // 有活跃交易时3秒刷新，否则停止
-    },
+    refreshInterval: 3000,
     revalidateOnFocus: true,
       revalidateOnReconnect: true,
       errorRetryCount: 3,

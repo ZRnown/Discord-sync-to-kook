@@ -23,7 +23,7 @@ export default function TradingDashboard() {
   const { isAuthenticated, logout } = useAuth()
   const [selectedTrader, setSelectedTrader] = useState<Trader | null>(null)
   const { traders, isLoading: tradersLoading } = useTraders()
-  const { trades, isLoading, isError, error, refresh } = useTrades(selectedTrader?.channel_id, selectedTrader?.id)
+  const { trades, isLoading, isError, error, refresh } = useTrades(selectedTrader?.channel_id)
 
   useEffect(() => {
     if (!isAuthenticated) {
