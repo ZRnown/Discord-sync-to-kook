@@ -12,10 +12,16 @@ interface HistoryTradeCardProps {
   trade: Trade
 }
 
+const ENDED_STATUSES = ["已止盈", "已止损", "带单主动止盈", "带单主动止损"]
+
 export function HistoryTradeCard({ trade }: HistoryTradeCardProps) {
   const [expanded, setExpanded] = useState(false)
   const isLong = trade.side === "long"
   const isProfitable = trade.pnl_points >= 0
+  // 如果交易已结束，使用固定的盈亏值，不再实时计算
+  const isEnded = ENDED_STATUSES.includes(trade.status)
+  const displayPnL = isEnded ? trade.pnl_points : (trade.pnl_points || 0)
+  const displayPnLPercent = isEnded ? trade.pnl_percent : (trade.pnl_percent || 0)
 
   return (
     <Card className="bg-card/50 border-border/50">
@@ -36,7 +42,7 @@ export function HistoryTradeCard({ trade }: HistoryTradeCardProps) {
           </div>
           <div className="flex items-center gap-4">
             <span className={cn("font-mono text-sm font-medium", isProfitable ? "text-profit" : "text-loss")}>
-              {formatPnL(trade.pnl_points)}
+              {formatPnL(displayPnL)}
             </span>
             <span className="text-xs text-muted-foreground">{trade.created_at_str}</span>
             {expanded ? (
@@ -67,7 +73,7 @@ export function HistoryTradeCard({ trade }: HistoryTradeCardProps) {
               <div className="text-right">
                 <p className="text-xs text-muted-foreground mb-0.5">盈亏比例</p>
                 <p className={cn("font-mono", isProfitable ? "text-profit" : "text-loss")}>
-                  {formatPercent(trade.pnl_percent)}
+                  {formatPercent(displayPnLPercent)}
                 </p>
               </div>
             </div>

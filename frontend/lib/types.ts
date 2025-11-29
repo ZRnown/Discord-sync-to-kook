@@ -43,11 +43,6 @@ export interface TradesResponse {
   data: Trade[]
 }
 
-export interface TradeDetailResponse {
-  success: boolean
-  data: Trade & { updates: TradeUpdate[] }
-}
-
 export interface PricesResponse {
   success: boolean
   data: Record<string, number>

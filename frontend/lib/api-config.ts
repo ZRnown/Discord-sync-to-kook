@@ -12,26 +12,32 @@ export const API_BASE_URL =
  */
 export const API_ENDPOINTS = {
   trades: `${API_BASE_URL}/api/trades`,
-  tradeDetail: (id: number) => `${API_BASE_URL}/api/trades/${id}`,
   prices: `${API_BASE_URL}/api/prices`,
   traders: `${API_BASE_URL}/api/traders`,
-  channelStatus: `${API_BASE_URL}/api/channels/status`,
 } as const
 
 /**
- * 创建带错误处理的 fetch 请求
+ * 创建带错误处理和认证的 fetch 请求
  */
 export async function apiFetch<T>(
   url: string,
   options?: RequestInit
 ): Promise<T> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null
+  
   try {
+    const headers: HeadersInit = {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    }
+    
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`
+    }
+    
     const response = await fetch(url, {
       ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-      },
+      headers,
     })
 
     if (!response.ok) {

@@ -3,7 +3,10 @@ aiohttp==3.12.15
 aiosignal==1.4.0
 attrs==25.3.0
 discord.py==2.6.3
-khl.py==0.3.17
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+python-multipart==0.0.12
 frozenlist==1.7.0
 idna==3.10
 multidict==6.6.4

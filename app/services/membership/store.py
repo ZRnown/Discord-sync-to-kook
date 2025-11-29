@@ -10,6 +10,11 @@ class MembershipStore:
         self._init_db()
 
     def _init_db(self):
+        import os
+        # 确保数据库目录存在
+        db_dir = os.path.dirname(self.db_path)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
         con = sqlite3.connect(self.db_path)
         try:
             con.execute(

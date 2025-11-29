@@ -18,12 +18,7 @@ def _env_bool(key: str, default: str = 'false') -> bool:
 class Settings:
     def __init__(self):
         self.ENABLE_DISCORD = _env_bool('ENABLE_DISCORD', 'true')
-        self.ENABLE_KOOK = _env_bool('ENABLE_KOOK', 'true')
         self.DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-        self.KOOK_BOT_TOKEN = os.getenv('KOOK_BOT_TOKEN')
-        self.FORWARD_RULES = os.getenv('FORWARD_RULES', '')
-        self.FORWARD_BOT_MESSAGES = _env_bool('FORWARD_BOT_MESSAGES', 'false')
-        self.MESSAGE_PREFIX = os.getenv('MESSAGE_PREFIX', '[Discord]')
 
         # Guild & Roles
         self.GUILD_ID = os.getenv('GUILD_ID')
@@ -35,7 +30,9 @@ class Settings:
         self.TRIAL_DURATION_HOURS = int(os.getenv('TRIAL_DURATION_HOURS', '6'))
         self.TRIAL_ONCE_PER_USER = _env_bool('TRIAL_ONCE_PER_USER', 'true')
         self.MEMBERSHIP_STORE = os.getenv('MEMBERSHIP_STORE', 'sqlite')  # sqlite/json
-        self.MEMBERSHIP_DB_PATH = os.getenv('MEMBERSHIP_DB_PATH', '/app/data/membership.db')
+        # 默认使用相对路径 ./data/membership.db
+        default_db_path = os.path.join(os.getcwd(), 'data', 'membership.db')
+        self.MEMBERSHIP_DB_PATH = os.getenv('MEMBERSHIP_DB_PATH', default_db_path)
 
         # OKX
         self.OKX_REST_BASE = os.getenv('OKX_REST_BASE', 'https://www.okx.com')
@@ -53,25 +50,24 @@ class Settings:
         self.DEEPSEEK_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
         self.DEEPSEEK_ENDPOINT = os.getenv('DEEPSEEK_ENDPOINT', 'https://api.deepseek.com/v1/chat/completions')
 
-        # Monitor bindings: channelId=uniqueCode@instId;channelId2=code2@inst2
-        self.MONITOR_BINDINGS = {}
-        bindings_raw = os.getenv('MONITOR_BINDINGS', '').strip()
-        if bindings_raw:
-            parts = [p.strip() for p in bindings_raw.split(';') if p.strip()]
+        # Trader configuration: trader_id|channel_id|trader_name;trader2|channel2|name2
+        # 格式：带单员ID|Discord频道ID|带单员名称
+        self.TRADER_CONFIG = {}
+        trader_config_raw = os.getenv('TRADER_CONFIG', '').strip()
+        if trader_config_raw:
+            parts = [p.strip() for p in trader_config_raw.split(';') if p.strip()]
             for p in parts:
-                if '=' in p and '@' in p:
-                    ch, right = p.split('=', 1)
-                    code, inst = right.split('@', 1)
-                    self.MONITOR_BINDINGS[ch.strip()] = {
-                        'unique_code': code.strip(),
-                        'inst_id': inst.strip()
-                    }
-
-        # Mirror settings
-        self.MIRROR_ENABLED = _env_bool('MIRROR_ENABLED', 'false')
-        self.DISCORD_GUILD_ID = os.getenv('DISCORD_GUILD_ID')
-        self.KOOK_GUILD_ID = os.getenv('KOOK_GUILD_ID')
-        self.MIRROR_CHANNEL_PREFIX = os.getenv('MIRROR_CHANNEL_PREFIX', '')
+                if '|' in p:
+                    segments = [s.strip() for s in p.split('|')]
+                    if len(segments) >= 2:
+                        trader_id = segments[0]
+                        channel_id = segments[1]
+                        trader_name = segments[2] if len(segments) > 2 else trader_id
+                        self.TRADER_CONFIG[trader_id] = {
+                            'channel_id': channel_id,
+                            'name': trader_name,
+                            'id': trader_id
+                        }
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

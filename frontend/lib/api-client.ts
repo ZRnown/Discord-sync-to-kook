@@ -5,7 +5,6 @@
 import { API_ENDPOINTS, apiFetch } from "./api-config"
 import type {
   TradesResponse,
-  TradeDetailResponse,
   PricesResponse,
   TradersResponse,
 } from "./types"
@@ -21,13 +20,6 @@ export async function getTrades(channelId?: string): Promise<TradesResponse> {
 }
 
 /**
- * 获取单个交易单详情
- */
-export async function getTradeDetail(id: number): Promise<TradeDetailResponse> {
-  return apiFetch<TradeDetailResponse>(API_ENDPOINTS.tradeDetail(id))
-}
-
-/**
  * 获取实时价格
  */
 export async function getPrices(): Promise<PricesResponse> {
@@ -39,12 +31,5 @@ export async function getPrices(): Promise<PricesResponse> {
  */
 export async function getTraders(): Promise<TradersResponse> {
   return apiFetch<TradersResponse>(API_ENDPOINTS.traders)
-}
-
-/**
- * 获取频道状态
- */
-export async function getChannelStatus() {
-  return apiFetch(API_ENDPOINTS.channelStatus)
 }
 

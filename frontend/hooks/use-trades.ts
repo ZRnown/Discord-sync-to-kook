@@ -4,7 +4,27 @@ import useSWR from "swr"
 import type { TradesResponse, TradersResponse, PricesResponse } from "@/lib/types"
 
 const fetcher = async (url: string) => {
-  const res = await fetch(url)
+  const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+  }
+  
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`
+  }
+  
+  const res = await fetch(url, { headers })
+  
+  if (res.status === 401) {
+    // 未授权，清除token并跳转到登录页
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("auth_token")
+      window.location.href = "/login"
+    }
+    const errorData = await res.json().catch(() => ({}))
+    throw new Error(errorData.error || "未授权，请重新登录")
+  }
+  
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}))
     const errorMessage = errorData.error || errorData.message || `HTTP ${res.status}: ${res.statusText}`
@@ -20,14 +40,25 @@ const fetcher = async (url: string) => {
   return data
 }
 
-export function useTrades(channelId?: string) {
-  const url = channelId ? `/api/trades?channel_id=${channelId}` : "/api/trades"
+export function useTrades(channelId?: string, traderId?: string) {
+  let url = "/api/trades"
+  const params = new URLSearchParams()
+  if (channelId) params.append("channel_id", channelId)
+  if (traderId) params.append("trader_id", traderId)
+  if (params.toString()) url += `?${params.toString()}`
+  
   const { data, error, isLoading, mutate } = useSWR<TradesResponse>(
     url,
     fetcher,
     {
-      refreshInterval: 3000,
-      revalidateOnFocus: true,
+    refreshInterval: (latestData) => {
+      // 如果所有交易单都已结束，停止自动刷新
+      const hasActiveTrades = latestData?.data?.some(
+        (trade) => !["已止盈", "已止损", "带单主动止盈", "带单主动止损"].includes(trade.status)
+      )
+      return hasActiveTrades ? 3000 : 0 // 有活跃交易时3秒刷新，否则停止
+    },
+    revalidateOnFocus: true,
       revalidateOnReconnect: true,
       errorRetryCount: 3,
       errorRetryInterval: 2000,
