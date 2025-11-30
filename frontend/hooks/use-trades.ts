@@ -67,7 +67,7 @@ export function useTrades(channelId?: string) {
 }
 
 export function useTraders() {
-  const { data, error, isLoading } = useSWR<TradersResponse>("/api/traders", fetcher, {
+  const { data, error, isLoading, mutate } = useSWR<TradersResponse>("/api/traders", fetcher, {
     revalidateOnFocus: true,
     revalidateOnReconnect: true,
     errorRetryCount: 3,
@@ -81,6 +81,7 @@ export function useTraders() {
     isLoading,
     isError: !!error,
     error: error?.message,
+    refresh: mutate,
   }
 }
 
