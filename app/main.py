@@ -10,9 +10,18 @@ def run_discord_bot():
         setup_discord_bot(bot, token)
         try:
             print('[Discord] 正在启动...')
-            bot.run(token)
+            print('[Discord] 🔄 正在连接到 Discord...')
+            bot.run(token, reconnect=True)
+        except discord.LoginFailure as e:
+            print(f'[Discord] ❌ 登录失败: Token 无效或已过期')
+            print(f'[Discord] ❌ 错误详情: {e}')
+        except discord.PrivilegedIntentsRequired as e:
+            print(f'[Discord] ❌ 权限不足: 需要在 Discord 开发者门户中启用必要的 Intents')
+            print(f'[Discord] ❌ 错误详情: {e}')
         except Exception as e:
-            print(f'[Discord] 启动异常: {e}')
+            print(f'[Discord] ❌ 启动异常: {e}')
+            import traceback
+            traceback.print_exc()
 
 def main():
     settings = get_settings()

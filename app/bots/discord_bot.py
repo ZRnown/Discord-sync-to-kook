@@ -62,12 +62,20 @@ class TrialView(discord.ui.View):
                             await interaction.user.add_roles(role, reason="体验权限申请")
                             role_assigned = True
                             print(f'[Membership] ✅ 成功为用户 {user_name}({user_id}) 分配角色 {role.name}({role_id})')
-                            # 验证角色是否真的被添加
-                            await interaction.user.fetch()  # 刷新用户信息
-                            if role in interaction.user.roles:
-                                print(f'[Membership] ✅ 验证：用户 {user_name} 现在拥有角色 {role.name}')
+                            # 验证角色是否真的被添加（Member 对象不需要 fetch，直接检查 roles）
+                            if isinstance(interaction.user, discord.Member):
+                                if role in interaction.user.roles:
+                                    print(f'[Membership] ✅ 验证：用户 {user_name} 现在拥有角色 {role.name}')
+                                else:
+                                    print(f'[Membership] ⚠️ 警告：角色分配后验证失败，用户可能没有该角色')
                             else:
-                                print(f'[Membership] ⚠️ 警告：角色分配后验证失败，用户可能没有该角色')
+                                # 如果是 User 对象，需要刷新
+                                try:
+                                    await interaction.user.fetch()
+                                    if hasattr(interaction.user, 'roles') and role in interaction.user.roles:
+                                        print(f'[Membership] ✅ 验证：用户 {user_name} 现在拥有角色 {role.name}')
+                                except Exception as fetch_error:
+                                    print(f'[Membership] ⚠️ 无法验证角色（非关键错误）: {fetch_error}')
             except ValueError as e:
                 print(f'[Membership] ❌ MEMBER_ROLE_ID 格式错误: {e}')
             except discord.Forbidden as e:
@@ -845,60 +853,15 @@ def setup_discord_bot(bot, token):
     @bot.event
     async def setup_hook():
         print('[Discord] 🔄 setup_hook: 开始初始化...')
-        # 注册 Cogs 并同步命令
+        # 注册 Cogs（setup_hook 在连接前调用，只用于注册 Cogs 和视图）
         try:
             # 先注册MembershipCog，因为它需要注册持久化视图
             membership_cog = MembershipCog(bot)
             await bot.add_cog(membership_cog)
             await bot.add_cog(OKXCog(bot))
             await bot.add_cog(MonitorCog(bot))
-            
-            # 同步命令 - 如果有 GUILD_ID，先同步到 guild（更快），否则同步全局命令
-            from app.config.settings import get_settings
-            settings = get_settings()
-            
-            # 等待 bot 完全就绪
-            await bot.wait_until_ready()
-            
-            if settings.GUILD_ID:
-                try:
-                    guild = discord.Object(id=int(settings.GUILD_ID))
-                    synced = await bot.tree.sync(guild=guild)
-                    print(f'[Discord] ✅ 同步了 {len(synced)} 个斜杠命令到服务器 {settings.GUILD_ID}')
-                    # 列出所有同步的命令
-                    if synced:
-                        command_names = [cmd.name for cmd in synced]
-                        print(f'[Discord] 📋 已同步的命令: {", ".join(command_names)}')
-                    else:
-                        print(f'[Discord] ⚠️ 没有命令被同步，可能命令已存在或同步失败')
-                except Exception as guild_error:
-                    print(f'[Discord] ⚠️ 同步到服务器失败，尝试全局同步: {guild_error}')
-                    import traceback
-                    traceback.print_exc()
-                    try:
-                        synced = await bot.tree.sync()
-                        print(f'[Discord] ✅ 全局同步了 {len(synced)} 个斜杠命令')
-                        if synced:
-                            command_names = [cmd.name for cmd in synced]
-                            print(f'[Discord] 📋 已同步的命令: {", ".join(command_names)}')
-                    except Exception as global_error:
-                        print(f'[Discord] ❌ 全局同步也失败: {global_error}')
-                        import traceback
-                        traceback.print_exc()
-            else:
-                try:
-                    synced = await bot.tree.sync()
-                    print(f'[Discord] ✅ 全局同步了 {len(synced)} 个斜杠命令')
-                    # 列出所有同步的命令
-                    if synced:
-                        command_names = [cmd.name for cmd in synced]
-                        print(f'[Discord] 📋 已同步的命令: {", ".join(command_names)}')
-                    else:
-                        print(f'[Discord] ⚠️ 没有命令被同步，可能命令已存在或同步失败')
-                except Exception as sync_error:
-                    print(f'[Discord] ❌ 命令同步失败: {sync_error}')
-                    import traceback
-                    traceback.print_exc()
+            print('[Discord] ✅ 所有 Cogs 已注册')
+            print('[Discord] ⏳ 等待连接到 Discord Gateway...')
         except Exception as e:
             print(f'[Discord] ❌ setup_hook 初始化出错: {e}')
             import traceback
@@ -909,6 +872,10 @@ def setup_discord_bot(bot, token):
         print('[Discord] 🔌 已连接到 Discord Gateway')
     
     @bot.event
+    async def on_disconnect():
+        print('[Discord] ⚠️ 与 Discord Gateway 断开连接')
+    
+    @bot.event
     async def on_resumed():
         print('[Discord] 🔄 连接已恢复')
     
@@ -916,22 +883,49 @@ def setup_discord_bot(bot, token):
     async def on_ready():
         print(f'[Discord] ✅ {bot.user} 已成功登录！')
         print(f'[Discord] 📊 Bot ID: {bot.user.id}')
+        print(f'[Discord] 📊 Bot 用户名: {bot.user.name}')
         print(f'[Discord] 📊 已加入 {len(bot.guilds)} 个服务器')
-        # 在 on_ready 中再次尝试同步命令（如果 setup_hook 中的同步失败）
+        if bot.guilds:
+            for guild in bot.guilds:
+                print(f'[Discord]   - {guild.name} (ID: {guild.id})')
+        
+        # 在 on_ready 中同步命令（连接成功后）
+        print('[Discord] 📝 开始同步斜杠命令...')
         try:
             from app.config.settings import get_settings
             settings = get_settings()
             if settings.GUILD_ID:
-                guild = discord.Object(id=int(settings.GUILD_ID))
-                synced = await bot.tree.sync(guild=guild)
-                if synced:
-                    print(f'[Discord] ✅ on_ready: 重新同步了 {len(synced)} 个命令到服务器')
+                try:
+                    guild = discord.Object(id=int(settings.GUILD_ID))
+                    synced = await bot.tree.sync(guild=guild)
+                    print(f'[Discord] ✅ 同步了 {len(synced)} 个斜杠命令到服务器 {settings.GUILD_ID}')
+                    if synced:
+                        command_names = [cmd.name for cmd in synced]
+                        print(f'[Discord] 📋 已同步的命令: {", ".join(command_names)}')
+                    else:
+                        print(f'[Discord] ⚠️ 没有命令被同步，可能命令已存在')
+                except Exception as guild_error:
+                    print(f'[Discord] ⚠️ 同步到服务器失败，尝试全局同步: {guild_error}')
+                    try:
+                        synced = await bot.tree.sync()
+                        print(f'[Discord] ✅ 全局同步了 {len(synced)} 个斜杠命令')
+                        if synced:
+                            command_names = [cmd.name for cmd in synced]
+                            print(f'[Discord] 📋 已同步的命令: {", ".join(command_names)}')
+                    except Exception as global_error:
+                        print(f'[Discord] ❌ 全局同步也失败: {global_error}')
             else:
                 synced = await bot.tree.sync()
+                print(f'[Discord] ✅ 全局同步了 {len(synced)} 个斜杠命令')
                 if synced:
-                    print(f'[Discord] ✅ on_ready: 重新同步了 {len(synced)} 个全局命令')
+                    command_names = [cmd.name for cmd in synced]
+                    print(f'[Discord] 📋 已同步的命令: {", ".join(command_names)}')
+                else:
+                    print(f'[Discord] ⚠️ 没有命令被同步，可能命令已存在')
         except Exception as e:
-            print(f'[Discord] ⚠️ on_ready 中同步命令失败: {e}')
+            print(f'[Discord] ❌ 命令同步失败: {e}')
+            import traceback
+            traceback.print_exc()
 
     @bot.event
     async def on_message(message):
