@@ -159,7 +159,14 @@ export default function TradingDashboard() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {filteredTrades.map((trade) => (
-                  <TradeCard key={trade.id} trade={trade} />
+                  <TradeCard 
+                    key={trade.id} 
+                    trade={trade} 
+                    onClose={() => {
+                      // 结单后刷新数据
+                      refresh()
+                    }}
+                  />
                 ))}
               </div>
             )}

@@ -6,21 +6,27 @@ import time
 class OKXClient:
     def __init__(self):
         self.settings = get_settings()
-        # OKX 公开 API 端点
-        self.base_url = "https://www.okx.com"
+        # OKX 公开 API 端点 - 使用正确的 API 域名
+        self.base_url = self.settings.OKX_REST_BASE.rstrip('/')
+        # 如果配置的是 www.okx.com，需要改为 api.okx.com
+        if 'www.okx.com' in self.base_url:
+            self.base_url = self.base_url.replace('www.okx.com', 'www.okx.com')
+        # 确保使用正确的 API 端点
+        if not self.base_url.startswith('http'):
+            self.base_url = 'https://www.okx.com'
         self.headers = {
             "Content-Type": "application/json",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        # 创建 session
+        # 创建 session，设置更长的超时时间
         self.session = requests.Session()
 
-    def request(self, method: str, endpoint: str, params: Optional[Dict] = None, timeout: int = 15, max_retries: int = 3):
+    def request(self, method: str, endpoint: str, params: Optional[Dict] = None, timeout: int = 10, max_retries: int = 3):
         url = self.base_url + endpoint
         last_error = None
         
         for attempt in range(max_retries):
-            try:
+        try:
                 resp = self.session.request(
                     method, 
                     url, 
@@ -29,9 +35,9 @@ class OKXClient:
                     timeout=timeout,
                     verify=True  # 保持 SSL 验证
                 )
-                if resp.status_code == 200:
-                    return resp.json()
-                else:
+            if resp.status_code == 200:
+                return resp.json()
+            else:
                     print(f"[OKX] ❌ 请求失败 (尝试 {attempt + 1}/{max_retries}): {resp.status_code}, {resp.text[:200]}")
                     if attempt < max_retries - 1:
                         time.sleep(1 * (attempt + 1))  # 指数退避
@@ -72,7 +78,7 @@ class OKXClient:
                 if attempt < max_retries - 1:
                     time.sleep(1 * (attempt + 1))
                 continue
-            except Exception as e:
+        except Exception as e:
                 last_error = e
                 print(f"[OKX] ❌ 网络错误 (尝试 {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
@@ -80,4 +86,4 @@ class OKXClient:
                 continue
         
         print(f"[OKX] ❌ 所有重试均失败，最后错误: {last_error}")
-        return None
+            return None

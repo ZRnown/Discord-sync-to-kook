@@ -71,3 +71,47 @@ export async function deleteTrade(tradeId: number): Promise<{ success: boolean; 
   return data
 }
 
+/**
+ * 手动结单
+ */
+export async function closeTrade(tradeId: number): Promise<{ 
+  success: boolean
+  message?: string
+  status?: string
+  pnl_points?: number
+  pnl_percent?: number
+}> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+  const url = `/api/trades/${tradeId}/close`
+  
+  const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`
+  }
+  
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+  })
+  
+  if (response.status === 401) {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("auth_token")
+      window.location.href = "/login"
+    }
+    throw new Error("未授权，请重新登录")
+  }
+  
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}))
+    throw new Error(errorData.detail || errorData.error || errorData.message || `HTTP ${response.status}: ${response.statusText}`)
+  }
+  
+  const data = await response.json()
+  return data
+}
+

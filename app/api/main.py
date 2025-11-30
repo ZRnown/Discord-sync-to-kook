@@ -116,6 +116,8 @@ class TradeResponse(BaseModel):
     confidence: Optional[float]
     created_at: int
     created_at_str: str
+    exited_pnl_points: Optional[float] = None  # 已出局部分的盈亏（用于部分出局）
+    remaining_pnl_points: Optional[float] = None  # 剩余部分的盈亏（用于部分出局）
 
 class TradesResponse(BaseModel):
     success: bool
@@ -304,6 +306,17 @@ async def get_trades(
             (trade_id, trader_id, ch_id, symbol, side, entry_price, take_profit, 
              stop_loss, confidence, created_at, status, pnl_points, pnl_percent, current_price) = row
             
+            # 检查是否有部分出局的更新记录
+            partial_exit = con.execute(
+                """
+                SELECT status, pnl_points, created_at FROM trade_updates 
+                WHERE trade_ref_id=? 
+                AND (status LIKE '%部分%' OR status LIKE '%部分出局%')
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (trade_id,)
+            ).fetchone()
+            
             # 检查是否有最新的更新状态（已止盈/止损等）
             latest_update = con.execute(
                 """
@@ -317,6 +330,7 @@ async def get_trades(
             
             # 判断交易是否已结束
             is_ended = False
+            exited_pnl = None  # 已出局部分的盈亏
             if latest_update:
                 status = latest_update[0]
                 is_ended = True
@@ -327,6 +341,11 @@ async def get_trades(
                         pnl_percent = (pnl_points / entry_price) * 100
             elif status and status in ['已止盈', '已止损', '带单主动止盈', '带单主动止损']:
                 is_ended = True
+            elif partial_exit:
+                # 部分出局：显示已出局部分的盈亏
+                exited_pnl = float(partial_exit[1]) if partial_exit[1] else None
+                # 状态保持为部分出局，但需要显示已出局和剩余部分的盈亏
+                status = partial_exit[0]  # 使用部分出局的状态
             
             # 获取带单员信息
             trader = trader_config.get_trader_by_id(trader_id) if trader_id else None
@@ -351,24 +370,49 @@ async def get_trades(
             created_at_str = datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M:%S")
             
             try:
-                trades.append(TradeResponse(
-                    id=trade_id,
-                    trader_id=trader_id,
-                    channel_id=ch_id,
-                    channel_name=channel_name,
-                    symbol=symbol or "",
-                    side=side or "",
-                    entry_price=float(entry_price) if entry_price else 0,
-                    take_profit=float(take_profit) if take_profit else 0,
-                    stop_loss=float(stop_loss) if stop_loss else 0,
-                    current_price=float(current_price) if current_price else None,
-                    status=status or "未进场",
-                    pnl_points=float(pnl_points) if pnl_points else None,
-                    pnl_percent=float(pnl_percent) if pnl_percent else None,
-                    confidence=float(confidence) if confidence else None,
-                    created_at=created_at,
-                    created_at_str=created_at_str
-                ))
+                    # 如果是部分出局，计算并显示已出局和剩余部分的盈亏
+                    final_pnl_points = pnl_points
+                    final_pnl_percent = pnl_percent
+                    exited_pnl_points = None
+                    remaining_pnl_points = None
+                    
+                    # 如果是部分出局，pnl_points 是剩余部分的盈亏，需要加上已出局部分的盈亏
+                    if partial_exit and exited_pnl is not None:
+                        # 剩余部分的盈亏已经在 pnl_points 中
+                        # 已出局部分的盈亏在 exited_pnl 中
+                        # 总盈亏 = 已出局 + 剩余部分
+                        remaining_pnl = float(pnl_points) if pnl_points else 0
+                        total_pnl = exited_pnl + remaining_pnl
+                        total_pnl_percent = (total_pnl / entry_price) * 100 if entry_price and entry_price > 0 else 0
+                        
+                        # 设置已出局和剩余部分的盈亏
+                        exited_pnl_points = exited_pnl
+                        remaining_pnl_points = remaining_pnl
+                        
+                        # 总盈亏显示在 pnl_points 中
+                        final_pnl_points = total_pnl
+                        final_pnl_percent = total_pnl_percent
+                    
+                    trades.append(TradeResponse(
+                        id=trade_id,
+                        trader_id=trader_id,
+                        channel_id=ch_id,
+                        channel_name=channel_name,
+                        symbol=symbol or "",
+                        side=side or "",
+                        entry_price=float(entry_price) if entry_price else 0,
+                        take_profit=float(take_profit) if take_profit else 0,
+                        stop_loss=float(stop_loss) if stop_loss else 0,
+                        current_price=float(current_price) if current_price else None,
+                        status=status or "未进场",
+                        pnl_points=float(final_pnl_points) if final_pnl_points else None,
+                        pnl_percent=float(final_pnl_percent) if final_pnl_percent else None,
+                        confidence=float(confidence) if confidence else None,
+                        created_at=created_at,
+                        created_at_str=created_at_str,
+                        exited_pnl_points=exited_pnl_points,
+                        remaining_pnl_points=remaining_pnl_points
+                    ))
             except Exception as e:
                 print(f"处理交易单 {trade_id} 时出错: {e}")
                 continue
@@ -530,6 +574,102 @@ async def delete_trade(trade_id: int, user_id: int = Depends(get_current_user)):
         con.rollback()
         print(f'[API] ❌ 删除交易单失败: {e}')
         raise HTTPException(status_code=500, detail=f"删除交易单失败: {str(e)}")
+    finally:
+        con.close()
+
+@app.post("/api/trades/{trade_id}/close")
+async def close_trade(trade_id: int, user_id: int = Depends(get_current_user)):
+    """手动结单：将活跃交易单标记为已结束"""
+    con = sqlite3.connect(store.db_path)
+    try:
+        # 获取交易单信息
+        cur = con.execute(
+            """
+            SELECT t.id, t.symbol, t.side, t.entry_price, t.take_profit, t.stop_loss,
+                   ts.status, ts.current_price
+            FROM trades t
+            LEFT JOIN trade_status_detail ts ON t.id = ts.trade_id
+            WHERE t.id = ?
+            """,
+            (trade_id,)
+        )
+        row = cur.fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="交易单不存在")
+        
+        (trade_id, symbol, side, entry_price, take_profit, stop_loss, 
+         current_status, current_price) = row
+        
+        # 检查是否已经结束
+        ended_statuses = ['已止盈', '已止损', '带单主动止盈', '带单主动止损']
+        if current_status and current_status in ended_statuses:
+            raise HTTPException(status_code=400, detail="交易单已经结束，无法再次结单")
+        
+        # 获取当前价格
+        if not current_price:
+            # 从OKX缓存获取当前价格
+            current_price = okx_cache.get_price(symbol)
+            if not current_price:
+                raise HTTPException(status_code=500, detail="无法获取当前价格，请稍后重试")
+        
+        # 计算盈亏
+        if side == "long":
+            pnl_points = current_price - entry_price
+        else:  # short
+            pnl_points = entry_price - current_price
+        
+        pnl_percent = (pnl_points / entry_price) * 100 if entry_price > 0 else 0
+        
+        # 根据盈亏判断状态
+        if pnl_points >= 0:
+            final_status = "带单主动止盈"
+        else:
+            final_status = "带单主动止损"
+        
+        now = int(time.time())
+        
+        # 更新交易状态
+        con.execute(
+            """
+            INSERT INTO trade_status_detail(trade_id, status, pnl_points, pnl_percent, current_price, updated_at)
+            VALUES(?,?,?,?,?,?)
+            ON CONFLICT(trade_id) DO UPDATE SET
+                status=excluded.status,
+                pnl_points=excluded.pnl_points,
+                pnl_percent=excluded.pnl_percent,
+                current_price=excluded.current_price,
+                updated_at=excluded.updated_at
+            """,
+            (trade_id, final_status, round(pnl_points, 2), round(pnl_percent, 2), current_price, now)
+        )
+        
+        # 可选：在trade_updates表中记录手动结单操作
+        con.execute(
+            """
+            INSERT INTO trade_updates(trader_id, trade_ref_id, channel_id, text, status, pnl_points, created_at)
+            VALUES(?,?,?,?,?,?,?)
+            """,
+            (None, trade_id, None, f"手动结单 - {final_status}", final_status, round(pnl_points, 2), now)
+        )
+        
+        con.commit()
+        print(f'[API] ✅ 用户 {user_id} 手动结单 {trade_id}: {final_status}, 盈亏: {round(pnl_points, 2)}点')
+        return {
+            "success": True, 
+            "message": f"交易单已结单: {final_status}",
+            "status": final_status,
+            "pnl_points": round(pnl_points, 2),
+            "pnl_percent": round(pnl_percent, 2)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        con.rollback()
+        print(f'[API] ❌ 手动结单失败: {e}')
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"手动结单失败: {str(e)}")
     finally:
         con.close()
 

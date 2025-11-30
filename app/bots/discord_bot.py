@@ -121,7 +121,7 @@ class MembershipCog(commands.Cog):
             # 检查所有有该角色的成员
             for member in role.members:
                 user_id = str(member.id)
-                st = self.mgr.get_status(user_id)
+            st = self.mgr.get_status(user_id)
                 
                 # 检查体验权限是否过期（6小时后自动撤销）
                 trial_expired = st.get('trial_end') and st['trial_end'] <= now
@@ -303,7 +303,16 @@ class MonitorCog(commands.Cog):
         self._periodic_compute.change_interval(seconds=interval)
         if not self._periodic_compute.is_running():
             self._periodic_compute.start()
+        
+        # 显示配置信息
+        traders = self.trader_config.get_all_traders()
         print(f'[Monitor] ✅ MonitorCog 已加载 - 价格轮询间隔: {interval}秒')
+        if traders:
+            print(f'[Monitor] 📋 已配置 {len(traders)} 个带单员:')
+            for trader in traders:
+                print(f'  - {trader.get("name", trader["id"])} (ID: {trader["id"]}, 频道ID: {trader["channel_id"]})')
+        else:
+            print(f'[Monitor] ⚠️ 未配置任何带单员，请在 .env 中设置 TRADER_CONFIG')
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -316,6 +325,16 @@ class MonitorCog(commands.Cog):
         # 检查频道是否有对应的带单员配置
         trader = self.trader_config.get_trader_by_channel_id(channel_id)
         if not trader:
+            # 调试：显示所有配置的频道ID
+            if hasattr(self, '_debug_logged') and not self._debug_logged:
+                all_traders = self.trader_config.get_all_traders()
+                if all_traders:
+                    channel_ids = [t['channel_id'] for t in all_traders]
+                    print(f'[Monitor] 🔍 调试: 当前消息频道ID {channel_id} 不在监控列表中')
+                    print(f'[Monitor] 🔍 调试: 已配置的频道ID: {channel_ids}')
+                else:
+                    print(f'[Monitor] ⚠️ 调试: 未配置任何带单员，无法监控任何频道')
+                self._debug_logged = True
             return  # 该频道没有配置带单员，跳过
         
         trader_id = trader['id']
@@ -341,6 +360,11 @@ class MonitorCog(commands.Cog):
         # 使用Deepseek解析交易信息
         data = self.ai.extract_trade(full_content)
         if not isinstance(data, dict) or not data:
+            # 检查消息是否包含出局/止盈/止损关键词，如果包含但未提取到，记录日志
+            exit_keywords = ['出局', '止盈', '止损', '获利', '亏损', '剩余', '继续持有', '设置止损', '成本价']
+            if any(keyword in message.content for keyword in exit_keywords):
+                print(f'[Monitor] ⚠️ 消息包含出局/止盈/止损关键词，但Deepseek未提取到信息')
+                print(f'[Monitor] ⚠️ 原始消息: {message.content[:200]}')
             if is_reply:
                 print(f'[Monitor] ⚠️ 回复消息中未提取到交易信息，已跳过')
             return
@@ -420,6 +444,8 @@ class MonitorCog(commands.Cog):
                 print(f'  📈 状态: {status}')
                 if pnl_points and pnl_points != 'N/A':
                     print(f'  💰 盈亏点数: {pnl_points}')
+                
+                # 确保表存在
                 con.execute(
                     """
                     CREATE TABLE IF NOT EXISTS trade_updates (
@@ -436,22 +462,93 @@ class MonitorCog(commands.Cog):
                     )
                     """
                 )
-                # 如果表已存在但没有trader_id字段，添加它
                 try:
                     con.execute("ALTER TABLE trade_updates ADD COLUMN trader_id TEXT")
                 except sqlite3.OperationalError:
-                    pass  # 字段已存在
+                    pass
                 
+                # 尝试找到最近的活跃交易单（未结束的）
+                cur = con.execute(
+                    """
+                    SELECT id, entry_price, take_profit, stop_loss, side, symbol FROM trades
+                    WHERE trader_id=? AND channel_id=?
+                    AND id NOT IN (
+                        SELECT DISTINCT trade_ref_id FROM trade_updates 
+                        WHERE status IN ('已止盈', '已止损', '带单主动止盈', '带单主动止损') 
+                        AND trade_ref_id IS NOT NULL
+                    )
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (trader_id, channel_id)
+                )
+                latest_trade = cur.fetchone()
+                trade_ref_id = latest_trade[0] if latest_trade else None
+                
+                # 保存更新记录
                 con.execute(
                     """
                     INSERT INTO trade_updates(trader_id, trade_ref_id, source_message_id, channel_id, user_id, text, pnl_points, status, created_at)
-                    VALUES(?,NULL,?,?,?,?,?,?,?)
+                    VALUES(?,?,?,?,?,?,?,?,?)
                     """,
-                    (trader_id, str(message.id), channel_id, str(message.author.id), message.content, data.get('pnl_points'), data.get('status'), now)
+                    (trader_id, trade_ref_id, str(message.id), channel_id, str(message.author.id), message.content, data.get('pnl_points'), data.get('status'), now)
                 )
+                
+                # 如果找到了对应的交易单，更新其状态
+                if trade_ref_id and latest_trade:
+                    trade_id, entry_price, take_profit, stop_loss, side, symbol = latest_trade
+                    
+                    # 根据状态类型判断最终状态
+                    update_status = data.get('status', '')
+                    
+                    # 判断是否为最终状态（已止盈、已止损等）
+                    final_statuses = ['已止盈', '已止损', '带单主动止盈', '带单主动止损']
+                    is_final_status = update_status in final_statuses
+                    
+                    # 如果是部分出局，交易单仍然活跃，但需要更新状态
+                    if '部分' in update_status or '部分出局' in update_status:
+                        # 部分出局：交易单仍然活跃，但状态显示为部分出局
+                        # 获取当前价格计算剩余部分的盈亏
+                        current_price = self.okx_cache.get_price(symbol)
+                        if current_price:
+                            # 计算剩余部分的盈亏（基于当前价格）
+                            if side == 'long':
+                                remaining_pnl = current_price - entry_price
+                            else:  # short
+                                remaining_pnl = entry_price - current_price
+                            
+                            remaining_pnl_percent = (remaining_pnl / entry_price) * 100 if entry_price > 0 else 0
+                            
+                            # 更新状态为部分出局，但交易单仍然活跃
+                            self._upsert_trade_status(con, trade_id, update_status, remaining_pnl, remaining_pnl_percent, current_price)
+                            print(f'[Monitor] 💰 部分出局 - 剩余部分盈亏: {remaining_pnl:.2f}点 ({remaining_pnl_percent:.2f}%)')
+                    elif is_final_status:
+                        # 最终状态：已止盈/已止损，交易单结束
+                        # 使用更新消息中的盈亏点数，如果没有则计算
+                        final_pnl = data.get('pnl_points')
+                        if final_pnl is None or final_pnl == 'N/A':
+                            # 如果没有提供盈亏点数，尝试从当前价格计算
+                            current_price = self.okx_cache.get_price(symbol)
+                            if current_price:
+                                if side == 'long':
+                                    final_pnl = current_price - entry_price
+                                else:  # short
+                                    final_pnl = entry_price - current_price
+                            else:
+                                final_pnl = 0
+                        
+                        final_pnl_percent = (final_pnl / entry_price) * 100 if entry_price > 0 else 0
+                        self._upsert_trade_status(con, trade_id, update_status, final_pnl, final_pnl_percent, None)
+                        print(f'[Monitor] ✅ 交易单已结束 - 状态: {update_status}, 盈亏: {final_pnl:.2f}点 ({final_pnl_percent:.2f}%)')
+                    else:
+                        # 其他更新状态（如浮盈、浮亏等），继续计算实时状态
+                        current_price = self.okx_cache.get_price(symbol)
+                        if current_price:
+                            status, pnl_points, pnl_percent = self._compute_trade_status(
+                                symbol, side, entry_price, take_profit, stop_loss, current_price
+                            )
+                            self._upsert_trade_status(con, trade_id, status, pnl_points, pnl_percent, current_price)
+                
                 con.commit()
-                # 同步到状态表（根据update标记）
-                self._upsert_status(con, channel_id, trader_id, status=data.get('status'), pnl_points=data.get('pnl_points'))
         finally:
             con.close()
 
@@ -501,21 +598,73 @@ class MonitorCog(commands.Cog):
                 con.commit()
                 
                 # 获取所有活跃的交易单（未结束的）
+                # 排除已结束的交易单（已止盈、已止损、带单主动止盈、带单主动止损）
                 cur = con.execute(
-                    """
-                    SELECT id, trader_id, channel_id, symbol, side, entry_price, take_profit, stop_loss
-                    FROM trades
-                    WHERE id NOT IN (
-                        SELECT DISTINCT trade_ref_id FROM trade_updates 
-                        WHERE status IN ('已止盈', '已止损', '带单主动止盈', '带单主动止损') AND trade_ref_id IS NOT NULL
-                    )
-                    ORDER BY created_at DESC
-                    """
+                            """
+                            SELECT t.id, t.trader_id, t.channel_id, t.symbol, t.side, t.entry_price, t.take_profit, t.stop_loss
+                            FROM trades t
+                            WHERE t.id NOT IN (
+                                SELECT DISTINCT trade_ref_id FROM trade_updates 
+                                WHERE status IN ('已止盈', '已止损', '带单主动止盈', '带单主动止损') 
+                                AND trade_ref_id IS NOT NULL
+                            )
+                            AND t.id NOT IN (
+                                SELECT trade_id FROM trade_status_detail
+                                WHERE status IN ('已止盈', '已止损', '带单主动止盈', '带单主动止损')
+                            )
+                            ORDER BY t.created_at DESC
+                            """
                 )
                 active_trades = cur.fetchall()
                 
                 for trade_row in active_trades:
                     trade_id, trader_id, channel_id, symbol, side, entry_price, take_profit, stop_loss = trade_row
+                    
+                    # 检查是否有部分出局的更新记录
+                    partial_exit = con.execute(
+                        """
+                        SELECT status, pnl_points FROM trade_updates
+                        WHERE trade_ref_id=? 
+                        AND (status LIKE '%部分%' OR status LIKE '%部分出局%')
+                        ORDER BY created_at DESC LIMIT 1
+                        """,
+                        (trade_id,)
+                    ).fetchone()
+                    
+                    # 如果已经有部分出局记录，检查状态是否应该更新
+                    if partial_exit:
+                        # 部分出局后，继续计算剩余部分的实时状态
+                        current_price = self.okx_cache.get_price(symbol)
+                        if current_price:
+                            # 计算剩余部分的盈亏
+                            if side == 'long':
+                                remaining_pnl = current_price - entry_price
+                            else:  # short
+                                remaining_pnl = entry_price - current_price
+                            
+                            remaining_pnl_percent = (remaining_pnl / entry_price) * 100 if entry_price > 0 else 0
+                            
+                            # 检查是否触发止盈/止损
+                            final_status = None
+                            if side == 'long':
+                                if take_profit and current_price >= take_profit:
+                                    final_status = "已止盈"
+                                elif stop_loss and current_price <= stop_loss:
+                                    final_status = "已止损"
+                            else:  # short
+                                if take_profit and current_price <= take_profit:
+                                    final_status = "已止盈"
+                                elif stop_loss and current_price >= stop_loss:
+                                    final_status = "已止损"
+                            
+                            if final_status:
+                                # 触发止盈/止损，更新为最终状态
+                                self._upsert_trade_status(con, trade_id, final_status, remaining_pnl, remaining_pnl_percent, current_price)
+                            else:
+                                # 继续显示部分出局状态，但更新剩余部分的盈亏
+                                status_text = partial_exit[0]  # 使用部分出局的状态文本
+                                self._upsert_trade_status(con, trade_id, status_text, remaining_pnl, remaining_pnl_percent, current_price)
+                        continue
                     
                     # 获取实时价格
                     current_price = self.okx_cache.get_price(symbol)

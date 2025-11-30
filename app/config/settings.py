@@ -47,8 +47,8 @@ class Settings:
         self.MONITOR_CHANNEL_IDS = [cid.strip() for cid in os.getenv('MONITOR_CHANNEL_IDS', '').split(',') if cid.strip()]
         self.MONITOR_PARSE_ENABLED = _env_bool('MONITOR_PARSE_ENABLED', 'true')
         self.DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
-        self.DEEPSEEK_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
-        self.DEEPSEEK_ENDPOINT = os.getenv('DEEPSEEK_ENDPOINT', 'https://api.deepseek.com/v1/chat/completions')
+        self.DEEPSEEK_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek-v3.2')
+        self.DEEPSEEK_ENDPOINT = os.getenv('DEEPSEEK_ENDPOINT', 'https://api.v3.cm/v1/chat/completions')
 
         # Trader configuration: trader_id|channel_id|trader_name;trader2|channel2|name2
         # 格式：带单员ID|Discord频道ID|带单员名称

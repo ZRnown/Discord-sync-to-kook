@@ -60,31 +60,45 @@ export function HistoryTradeCard({ trade, onDelete }: HistoryTradeCardProps) {
     <Card className="bg-card/50 border-border/50">
       <CardContent className="p-3">
         {/* 折叠的摘要行 */}
-        <button onClick={() => setExpanded(!expanded)} className="w-full flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <span className="font-medium text-sm">{trade.symbol}</span>
-            <span
-              className={cn(
-                "px-1.5 py-0.5 rounded text-xs font-medium",
-                isLong ? "bg-profit/20 text-profit" : "bg-loss/20 text-loss",
+        <div className="flex items-center gap-2">
+          <button onClick={() => setExpanded(!expanded)} className="flex-1 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="font-medium text-sm">{trade.symbol}</span>
+              <span
+                className={cn(
+                  "px-1.5 py-0.5 rounded text-xs font-medium",
+                  isLong ? "bg-profit/20 text-profit" : "bg-loss/20 text-loss",
+                )}
+              >
+                {isLong ? "多" : "空"}
+              </span>
+              <StatusBadge status={trade.status} size="sm" />
+            </div>
+            <div className="flex items-center gap-4">
+              <span className={cn("font-mono text-sm font-medium", finalPnlPoints >= 0 ? "text-profit" : "text-loss")}>
+                {formatPnL(finalPnlPoints)}
+              </span>
+              <span className="text-xs text-muted-foreground">{trade.created_at_str}</span>
+              {expanded ? (
+                <ChevronUp className="w-4 h-4 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-muted-foreground" />
               )}
-            >
-              {isLong ? "多" : "空"}
-            </span>
-            <StatusBadge status={trade.status} size="sm" />
-          </div>
-          <div className="flex items-center gap-4">
-            <span className={cn("font-mono text-sm font-medium", finalPnlPoints >= 0 ? "text-profit" : "text-loss")}>
-              {formatPnL(finalPnlPoints)}
-            </span>
-            <span className="text-xs text-muted-foreground">{trade.created_at_str}</span>
-            {expanded ? (
-              <ChevronUp className="w-4 h-4 text-muted-foreground" />
-            ) : (
-              <ChevronDown className="w-4 h-4 text-muted-foreground" />
-            )}
-          </div>
-        </button>
+            </div>
+          </button>
+          {/* 删除按钮 - 在折叠状态下也可见 */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={(e) => {
+              e.stopPropagation()
+              setShowDeleteDialog(true)
+            }}
+            className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+          >
+            <Trash2 className="w-4 h-4" />
+          </Button>
+        </div>
 
         {/* 展开的详情 */}
         {expanded && (

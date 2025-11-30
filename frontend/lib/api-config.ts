@@ -15,6 +15,7 @@ export const API_ENDPOINTS = {
   prices: `${API_BASE_URL}/api/prices`,
   traders: `${API_BASE_URL}/api/traders`,
   deleteTrade: (tradeId: number) => `${API_BASE_URL}/api/trades/${tradeId}`,
+  closeTrade: (tradeId: number) => `${API_BASE_URL}/api/trades/${tradeId}/close`,
 } as const
 
 /**
