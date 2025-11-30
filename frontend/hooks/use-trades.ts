@@ -5,7 +5,7 @@ import type { TradesResponse, TradersResponse, PricesResponse } from "@/lib/type
 
 const fetcher = async (url: string) => {
   const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
   }
   

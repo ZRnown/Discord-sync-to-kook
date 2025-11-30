@@ -6,10 +6,11 @@ import { NextResponse } from "next/server"
  */
 export async function DELETE(
   request: Request,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+    const params = await context.params
     const tradeId = params.id
     const url = `${API_BASE_URL}/api/trades/${tradeId}`
     
