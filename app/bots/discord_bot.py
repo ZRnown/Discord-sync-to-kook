@@ -131,7 +131,7 @@ class MembershipCog(commands.Cog):
 
     async def cog_load(self):
         # 注册持久化视图（按钮）- 必须在cog_load中注册
-        self.bot.add_view(TrialView(self.mgr, self.settings, self.bot))
+        self.bot.add_view(TrialView(self.mgr, self.settings))
         # 启动定期检查任务
         if not self._check_expired.is_running():
             self._check_expired.start()
@@ -243,7 +243,7 @@ class MembershipCog(commands.Cog):
         )
         
         # 创建视图（包含按钮）
-        view = TrialView(self.mgr, self.settings, self.bot)
+        view = TrialView(self.mgr, self.settings)
         
         try:
             await target_channel.send(embed=embed, view=view)
