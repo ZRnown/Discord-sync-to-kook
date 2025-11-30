@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { getAuthToken, setAuthToken, removeAuthToken, isAuthenticated } from "@/lib/auth"
+import { getAuthToken, setAuthToken, removeAuthToken, isAuthenticated, getUserRole, setUserRole } from "@/lib/auth"
 
 interface LoginCredentials {
   username: string
@@ -17,7 +17,41 @@ interface ChangePasswordData {
 export function useAuth() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [userRole, setUserRoleState] = useState<string | null>(null)
   const router = useRouter()
+
+  // 初始化时获取用户角色
+  useEffect(() => {
+    if (isAuthenticated()) {
+      const role = getUserRole()
+      setUserRoleState(role)
+      // 如果没有保存角色，从API获取
+      if (!role) {
+        fetchUserInfo()
+      }
+    }
+  }, [])
+
+  const fetchUserInfo = async () => {
+    const token = getAuthToken()
+    if (!token) return
+    
+    try {
+      const response = await fetch("/api/auth/me", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+      const data = await response.json()
+      if (data.success && data.data) {
+        const role = data.data.role || "user"
+        setUserRole(role)
+        setUserRoleState(role)
+      }
+    } catch (err) {
+      console.error("获取用户信息失败:", err)
+    }
+  }
 
   const login = async (credentials: LoginCredentials) => {
     setLoading(true)
@@ -35,6 +69,10 @@ export function useAuth() {
 
       if (data.success && data.token) {
         setAuthToken(data.token)
+        // 保存用户角色
+        const role = data.role || "user"
+        setUserRole(role)
+        setUserRoleState(role)
         router.push("/")
         return { success: true }
       } else {
@@ -65,6 +103,7 @@ export function useAuth() {
       }
     }
     removeAuthToken()
+    setUserRoleState(null)
     router.push("/login")
   }
 
@@ -111,6 +150,8 @@ export function useAuth() {
     loading,
     error,
     isAuthenticated: isAuthenticated(),
+    userRole: userRole || getUserRole() || "user",
+    isAdmin: (userRole || getUserRole()) === "admin",
   }
 }
 

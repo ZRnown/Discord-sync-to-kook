@@ -9,13 +9,13 @@ import { PriceTicker } from "@/components/price-ticker"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import type { Trader } from "@/lib/types"
-import { Activity, Settings, LogOut, RefreshCw } from "lucide-react"
+import { Activity, Settings, LogOut, RefreshCw, Users } from "lucide-react"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 
 export default function TradingDashboard() {
   const router = useRouter()
-  const { isAuthenticated, logout } = useAuth()
+  const { isAuthenticated, logout, isAdmin } = useAuth()
   const { traders, isLoading: tradersLoading, refresh: refreshTraders } = useTraders()
   
   // 获取所有交易数据（不指定channel_id，获取所有）
@@ -54,6 +54,13 @@ export default function TradingDashboard() {
             <div className="flex items-center gap-4">
               <PriceTicker />
               <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded">实时</span>
+              {isAdmin && (
+                <Link href="/admin">
+                  <Button variant="ghost" size="icon" title="用户管理">
+                    <Users className="w-5 h-5" />
+                  </Button>
+                </Link>
+              )}
               <Link href="/settings">
                 <Button variant="ghost" size="icon">
                   <Settings className="w-5 h-5" />

@@ -10,6 +10,7 @@ import { formatPrice, formatPnL, formatPercent, getStatusBorderColor } from "@/l
 import type { Trade } from "@/lib/types"
 import { TrendingUp, TrendingDown, Clock, X, Trash2 } from "lucide-react"
 import { closeTrade, deleteTrade } from "@/lib/api-client"
+import { useAuth } from "@/hooks/use-auth"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,6 +29,7 @@ interface TradeCardProps {
 }
 
 export function TradeCard({ trade, onClose, onDelete }: TradeCardProps) {
+  const { isAdmin } = useAuth()
   const prevPriceRef = useRef(trade.current_price)
   const [priceAnimation, setPriceAnimation] = useState<"up" | "down" | null>(null)
   const [showCloseDialog, setShowCloseDialog] = useState(false)
@@ -219,29 +221,34 @@ export function TradeCard({ trade, onClose, onDelete }: TradeCardProps) {
           <span>{trade.created_at_str}</span>
           </div>
           <div className="flex items-center gap-2">
-            {/* 待入场状态：显示删除按钮 */}
-            {isPending && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowDeleteDialog(true)}
-                className="h-7 text-xs gap-1.5 text-destructive hover:text-destructive"
-              >
-                <Trash2 className="w-3 h-3" />
-                删除
-              </Button>
-            )}
-            {/* 已入场但未结束：显示手动结单按钮 */}
-            {!isEnded && !isPending && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowCloseDialog(true)}
-                className="h-7 text-xs gap-1.5"
-              >
-                <X className="w-3 h-3" />
-                手动结单
-              </Button>
+            {/* 只有管理员才能删除和结单 */}
+            {isAdmin && (
+              <>
+                {/* 待入场状态：显示删除按钮 */}
+                {isPending && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowDeleteDialog(true)}
+                    className="h-7 text-xs gap-1.5 text-destructive hover:text-destructive"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    删除
+                  </Button>
+                )}
+                {/* 已入场但未结束：显示手动结单按钮 */}
+                {!isEnded && !isPending && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowCloseDialog(true)}
+                    className="h-7 text-xs gap-1.5"
+                  >
+                    <X className="w-3 h-3" />
+                    手动结单
+                  </Button>
+                )}
+              </>
             )}
           </div>
         </div>

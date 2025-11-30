@@ -9,6 +9,7 @@ import type { Trade } from "@/lib/types"
 import { ChevronDown, ChevronUp, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { deleteTrade } from "@/lib/api-client"
+import { useAuth } from "@/hooks/use-auth"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,6 +27,7 @@ interface HistoryTradeCardProps {
 }
 
 export function HistoryTradeCard({ trade, onDelete }: HistoryTradeCardProps) {
+  const { isAdmin } = useAuth()
   const [expanded, setExpanded] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -86,38 +88,42 @@ export function HistoryTradeCard({ trade, onDelete }: HistoryTradeCardProps) {
             )}
           </div>
         </button>
-          {/* 删除按钮 - 在折叠状态下也可见 */}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={(e) => {
-              e.stopPropagation()
-              setShowDeleteDialog(true)
-            }}
-            className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-          >
-            <Trash2 className="w-4 h-4" />
-          </Button>
+          {/* 删除按钮 - 在折叠状态下也可见（仅管理员） */}
+          {isAdmin && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowDeleteDialog(true)
+              }}
+              className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+            >
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          )}
         </div>
 
         {/* 展开的详情 */}
         {expanded && (
           <div className="mt-3 pt-3 border-t border-border/50 space-y-3">
-            {/* 删除按钮 */}
-            <div className="flex justify-end">
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setShowDeleteDialog(true)
-                }}
-                className="gap-2"
-              >
-                <Trash2 className="w-4 h-4" />
-                删除
-              </Button>
-            </div>
+            {/* 删除按钮（仅管理员） */}
+            {isAdmin && (
+              <div className="flex justify-end">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setShowDeleteDialog(true)
+                  }}
+                  className="gap-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  删除
+                </Button>
+              </div>
+            )}
             {/* 价格信息 */}
             <div className="grid grid-cols-4 gap-3 text-sm">
               <div>

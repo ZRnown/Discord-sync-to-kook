@@ -12,7 +12,7 @@ import { HistorySection } from "@/components/history-section"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import type { StatusFilter, SideFilter, TradeStatus } from "@/lib/types"
-import { Activity, ArrowLeft, Settings, LogOut } from "lucide-react"
+import { Activity, ArrowLeft, Settings, LogOut, Users } from "lucide-react"
 import Link from "next/link"
 
 const ENDED_STATUSES: TradeStatus[] = ["已止盈", "已止损", "带单主动止盈", "带单主动止损"]
@@ -21,7 +21,7 @@ export default function TraderDetailPage() {
   const router = useRouter()
   const params = useParams()
   const traderId = params?.id as string
-  const { isAuthenticated, logout } = useAuth()
+  const { isAuthenticated, logout, isAdmin } = useAuth()
   const { traders, isLoading: tradersLoading } = useTraders()
   const trader = traders.find(t => t.id === traderId)
   
@@ -110,6 +110,13 @@ export default function TraderDetailPage() {
             <div className="flex items-center gap-4">
               <PriceTicker />
               <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded">实时</span>
+              {isAdmin && (
+                <Link href="/admin">
+                  <Button variant="ghost" size="icon" title="用户管理">
+                    <Users className="w-5 h-5" />
+                  </Button>
+                </Link>
+              )}
               <Link href="/settings">
                 <Button variant="ghost" size="icon">
                   <Settings className="w-5 h-5" />
