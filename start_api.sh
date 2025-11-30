@@ -32,3 +32,4 @@ echo ""
 # 启动服务 - 使用正确的模块路径
 python3 -m uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
 
+

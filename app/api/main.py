@@ -361,6 +361,12 @@ async def get_trades(
             if not status:
                 status = "未进场"
             
+            # 如果是"待入场"状态，尝试获取当前价格用于显示
+            if status == "待入场" and not current_price and symbol:
+                price = okx_cache.get_price(symbol)
+                if price:
+                    current_price = float(price)
+            
             # 如果交易已结束，不再更新价格和重新计算（保持最终状态）
             if is_ended:
                 # 已结束的交易，不再获取实时价格，使用已保存的最终价格

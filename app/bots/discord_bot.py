@@ -474,20 +474,46 @@ class MonitorCog(commands.Cog):
                 )
                 trade_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
                 
-                # 立即计算状态并保存
+                # 检查币价是否到达入场价
                 symbol = data.get('symbol')
-                if symbol:
+                entry_price = data.get('entry_price')
+                side = data.get('side')
+                
+                if symbol and entry_price:
                     current_price = self.okx_cache.get_price(symbol)
                     if current_price:
-                        side = data.get('side')
-                        entry_price = data.get('entry_price')
-                        take_profit = data.get('take_profit')
-                        stop_loss = data.get('stop_loss')
-                        status, pnl_points, pnl_percent = self._compute_trade_status(
-                            symbol, side, entry_price, take_profit, stop_loss, current_price
-                        )
-                        self._upsert_trade_status(con, trade_id, status, pnl_points, pnl_percent, current_price)
-                        print(f'[Monitor] 💰 已计算初始状态 - 当前价: {current_price}, 状态: {status}, 盈亏: {pnl_points}')
+                        # 检查是否到达入场价（允许0.5%的误差）
+                        price_tolerance = entry_price * 0.005  # 0.5%误差
+                        price_reached = False
+                        
+                        if side == 'long':
+                            # 做多：当前价 >= 入场价 - 误差
+                            price_reached = current_price >= (entry_price - price_tolerance)
+                        else:  # short
+                            # 做空：当前价 <= 入场价 + 误差
+                            price_reached = current_price <= (entry_price + price_tolerance)
+                        
+                        if price_reached:
+                            # 币价已到达，立即计算状态并保存
+                            take_profit = data.get('take_profit')
+                            stop_loss = data.get('stop_loss')
+                            status, pnl_points, pnl_percent = self._compute_trade_status(
+                                symbol, side, entry_price, take_profit, stop_loss, current_price
+                            )
+                            self._upsert_trade_status(con, trade_id, status, pnl_points, pnl_percent, current_price)
+                            print(f'[Monitor] ✅ 币价已到达入场价 - 当前价: {current_price}, 入场价: {entry_price}, 状态: {status}')
+                        else:
+                            # 币价未到达，标记为"待入场"
+                            self._upsert_trade_status(con, trade_id, "待入场", None, None, current_price)
+                            print(f'[Monitor] ⏳ 币价未到达入场价 - 当前价: {current_price}, 入场价: {entry_price}, 等待中...')
+                    else:
+                        # 无法获取价格，标记为"待入场"
+                        self._upsert_trade_status(con, trade_id, "待入场", None, None, None)
+                        print(f'[Monitor] ⏳ 无法获取当前价格，标记为待入场')
+                else:
+                    # 缺少必要信息，标记为"待入场"
+                    self._upsert_trade_status(con, trade_id, "待入场", None, None, None)
+                    print(f'[Monitor] ⏳ 缺少交易对或入场价信息，标记为待入场')
                 
                 con.commit()
             elif data.get('type') == 'update':
@@ -670,6 +696,48 @@ class MonitorCog(commands.Cog):
                             """
                 )
                 active_trades = cur.fetchall()
+                
+                # 检查"待入场"的交易是否到达入场价
+                pending_trades = con.execute(
+                    """
+                    SELECT t.id, t.symbol, t.side, t.entry_price, t.take_profit, t.stop_loss
+                    FROM trades t
+                    INNER JOIN trade_status_detail ts ON t.id = ts.trade_id
+                    WHERE ts.status = '待入场'
+                    ORDER BY t.created_at DESC
+                    """
+                ).fetchall()
+                
+                for pending_row in pending_trades:
+                    trade_id, symbol, side, entry_price, take_profit, stop_loss = pending_row
+                    if not symbol or not entry_price:
+                        continue
+                    
+                    current_price = self.okx_cache.get_price(symbol)
+                    if not current_price:
+                        continue
+                    
+                    # 检查是否到达入场价（允许0.5%的误差）
+                    price_tolerance = entry_price * 0.005  # 0.5%误差
+                    price_reached = False
+                    
+                    if side == 'long':
+                        # 做多：当前价 >= 入场价 - 误差
+                        price_reached = current_price >= (entry_price - price_tolerance)
+                    else:  # short
+                        # 做空：当前价 <= 入场价 + 误差
+                        price_reached = current_price <= (entry_price + price_tolerance)
+                    
+                    if price_reached:
+                        # 币价已到达，开始正常计算状态
+                        status, pnl_points, pnl_percent = self._compute_trade_status(
+                            symbol, side, entry_price, take_profit, stop_loss, current_price
+                        )
+                        self._upsert_trade_status(con, trade_id, status, pnl_points, pnl_percent, current_price)
+                        print(f'[Monitor] ✅ 待入场交易 #{trade_id} 币价已到达 - 当前价: {current_price}, 入场价: {entry_price}, 状态: {status}')
+                    else:
+                        # 更新当前价格，但保持"待入场"状态
+                        self._upsert_trade_status(con, trade_id, "待入场", None, None, current_price)
                 
                 for trade_row in active_trades:
                     trade_id, trader_id, channel_id, symbol, side, entry_price, take_profit, stop_loss = trade_row
@@ -894,36 +962,31 @@ def setup_discord_bot(bot, token):
         try:
             from app.config.settings import get_settings
             settings = get_settings()
-            if settings.GUILD_ID:
-                try:
-                    guild = discord.Object(id=int(settings.GUILD_ID))
-                    synced = await bot.tree.sync(guild=guild)
-                    print(f'[Discord] ✅ 同步了 {len(synced)} 个斜杠命令到服务器 {settings.GUILD_ID}')
-                    if synced:
-                        command_names = [cmd.name for cmd in synced]
-                        print(f'[Discord] 📋 已同步的命令: {", ".join(command_names)}')
-                    else:
-                        print(f'[Discord] ⚠️ 没有命令被同步，可能命令已存在')
-                except Exception as guild_error:
-                    print(f'[Discord] ⚠️ 同步到服务器失败，尝试全局同步: {guild_error}')
-                    try:
-                        synced = await bot.tree.sync()
-                        print(f'[Discord] ✅ 全局同步了 {len(synced)} 个斜杠命令')
-                        if synced:
-                            command_names = [cmd.name for cmd in synced]
-                            print(f'[Discord] 📋 已同步的命令: {", ".join(command_names)}')
-                    except Exception as global_error:
-                        print(f'[Discord] ❌ 全局同步也失败: {global_error}')
-            else:
+            
+            # 优先进行全局同步（这样所有服务器都能使用命令）
+            try:
                 synced = await bot.tree.sync()
-                print(f'[Discord] ✅ 全局同步了 {len(synced)} 个斜杠命令')
+                print(f'[Discord] ✅ 全局同步了 {len(synced)} 个斜杠命令（所有服务器可用）')
                 if synced:
                     command_names = [cmd.name for cmd in synced]
                     print(f'[Discord] 📋 已同步的命令: {", ".join(command_names)}')
                 else:
-                    print(f'[Discord] ⚠️ 没有命令被同步，可能命令已存在')
+                    print(f'[Discord] ⚠️ 没有命令被同步，可能命令已存在或正在同步中')
+            except Exception as global_error:
+                print(f'[Discord] ❌ 全局同步失败: {global_error}')
+                import traceback
+                traceback.print_exc()
+            
+            # 如果配置了 GUILD_ID，也同步到特定服务器（用于快速测试，但全局同步已覆盖）
+            if settings.GUILD_ID:
+                try:
+                    guild = discord.Object(id=int(settings.GUILD_ID))
+                    synced_guild = await bot.tree.sync(guild=guild)
+                    print(f'[Discord] ✅ 额外同步了 {len(synced_guild)} 个命令到服务器 {settings.GUILD_ID}')
+                except Exception as guild_error:
+                    print(f'[Discord] ⚠️ 同步到服务器 {settings.GUILD_ID} 失败（不影响全局同步）: {guild_error}')
         except Exception as e:
-            print(f'[Discord] ❌ 命令同步失败: {e}')
+            print(f'[Discord] ❌ 命令同步过程出错: {e}')
             import traceback
             traceback.print_exc()
 
@@ -939,10 +1002,28 @@ def setup_discord_bot(bot, token):
         """处理应用命令错误"""
         if isinstance(error, discord.app_commands.CommandNotFound):
             print(f'[Discord] ❌ 命令未找到: {error}')
+            print(f'[Discord] 🔄 尝试重新同步命令到当前服务器...')
+            
+            # 尝试重新同步命令到当前服务器
+            try:
+                if interaction.guild:
+                    guild = discord.Object(id=interaction.guild.id)
+                    synced = await bot.tree.sync(guild=guild)
+                    print(f'[Discord] ✅ 已重新同步 {len(synced)} 个命令到服务器 {interaction.guild.name} ({interaction.guild.id})')
+                else:
+                    # 如果是 DM，进行全局同步
+                    synced = await bot.tree.sync()
+                    print(f'[Discord] ✅ 已重新全局同步 {len(synced)} 个命令')
+                
+                message = "✅ 命令已重新同步，请稍后再试"
+            except Exception as sync_error:
+                print(f'[Discord] ❌ 重新同步失败: {sync_error}')
+                message = "❌ 命令未找到，请等待命令同步完成或重启机器人"
+            
             if interaction.response.is_done():
-                await interaction.followup.send("❌ 命令未找到，请等待命令同步完成或重启机器人", ephemeral=True)
+                await interaction.followup.send(message, ephemeral=True)
             else:
-                await interaction.response.send_message("❌ 命令未找到，请等待命令同步完成或重启机器人", ephemeral=True)
+                await interaction.response.send_message(message, ephemeral=True)
         elif isinstance(error, discord.app_commands.MissingPermissions):
             if interaction.response.is_done():
                 await interaction.followup.send("❌ 您没有权限使用此命令", ephemeral=True)
