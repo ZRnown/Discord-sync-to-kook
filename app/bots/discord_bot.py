@@ -175,7 +175,7 @@ class MembershipCog(commands.Cog):
             # 检查所有有该角色的成员
             for member in role.members:
                 user_id = str(member.id)
-                st = self.mgr.get_status(user_id)
+            st = self.mgr.get_status(user_id)
                 
                 # 检查体验权限是否过期（6小时后自动撤销）
                 trial_expired = st.get('trial_end') and st['trial_end'] <= now
@@ -370,8 +370,8 @@ class MonitorCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        # 不拦截自身
-        if message.author.bot:
+        # 只忽略自己的消息，允许监听其他机器人的消息
+        if message.author == self.bot.user:
             return
         
         channel_id = str(message.channel.id)

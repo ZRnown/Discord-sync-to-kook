@@ -61,11 +61,30 @@ def init_user_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user',
+                note TEXT,
                 created_at INTEGER,
                 updated_at INTEGER
             )
             """
         )
+        # 添加role字段（如果表已存在但没有该字段）
+        try:
+            con.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
+            # 为现有用户设置默认角色
+            con.execute("UPDATE users SET role='user' WHERE role IS NULL")
+            con.commit()
+        except sqlite3.OperationalError:
+            # 字段已存在，但确保所有用户都有 role
+            con.execute("UPDATE users SET role='user' WHERE role IS NULL")
+            con.commit()
+        # 添加note字段（如果表已存在但没有该字段）
+        try:
+            con.execute("ALTER TABLE users ADD COLUMN note TEXT")
+            con.commit()
+        except sqlite3.OperationalError:
+            pass  # 字段已存在
+        
         con.execute(
             """
             CREATE TABLE IF NOT EXISTS sessions (
@@ -100,6 +119,7 @@ class LoginResponse(BaseModel):
     success: bool
     token: Optional[str] = None
     message: Optional[str] = None
+    role: Optional[str] = None
 
 class ChangePasswordRequest(BaseModel):
     old_password: str
@@ -153,21 +173,63 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     finally:
         con.close()
 
+async def get_current_user_with_role(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """获取当前用户信息（包括角色）"""
+    token = credentials.credentials
+    con = sqlite3.connect(USER_DB_PATH)
+    try:
+        cur = con.execute(
+            """
+            SELECT s.user_id, s.expires_at, u.role
+            FROM sessions s
+            JOIN users u ON s.user_id = u.id
+            WHERE s.token=?
+            """,
+            (token,)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=401, detail="无效的token")
+        user_id, expires_at, role = row
+        if expires_at < int(time.time()):
+            raise HTTPException(status_code=401, detail="token已过期")
+        return {"user_id": user_id, "role": role}
+    finally:
+        con.close()
+
+async def require_admin(user_info: dict = Depends(get_current_user_with_role)):
+    """要求管理员权限"""
+    if user_info["role"] != "admin":
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    return user_info
+
 # API路由
 @app.post("/api/auth/login", response_model=LoginResponse)
 async def login(request: LoginRequest):
     """用户登录"""
     con = sqlite3.connect(USER_DB_PATH)
     try:
+        # 先尝试查询包含 role 字段
         cur = con.execute(
-            "SELECT id, password_hash FROM users WHERE username=?",
+            "SELECT id, password_hash, COALESCE(role, 'user') as role FROM users WHERE username=?",
             (request.username,)
         )
         row = cur.fetchone()
         if not row:
             return LoginResponse(success=False, message="用户名或密码错误")
         
-        user_id, password_hash = row
+        user_id, password_hash, role = row
+        
+        # 如果 role 为 None，设置为默认值 'user'
+        if role is None:
+            role = 'user'
+            # 更新数据库中的 role 字段
+            con.execute(
+                "UPDATE users SET role=? WHERE id=?",
+                (role, user_id)
+            )
+            con.commit()
+        
         if not verify_password(request.password, password_hash):
             return LoginResponse(success=False, message="用户名或密码错误")
         
@@ -182,7 +244,12 @@ async def login(request: LoginRequest):
         )
         con.commit()
         
-        return LoginResponse(success=True, token=token)
+        return LoginResponse(success=True, token=token, role=role or 'user')
+    except Exception as e:
+        print(f"[Login] 登录异常: {e}")
+        import traceback
+        traceback.print_exc()
+        return LoginResponse(success=False, message=f"登录失败: {str(e)}")
     finally:
         con.close()
 
@@ -570,8 +637,8 @@ async def get_prices(user_id: int = Depends(get_current_user)):
     return {"success": True, "data": prices}
 
 @app.delete("/api/trades/{trade_id}")
-async def delete_trade(trade_id: int, user_id: int = Depends(get_current_user)):
-    """删除指定的交易单（包括相关的更新记录和状态记录）"""
+async def delete_trade(trade_id: int, user_info: dict = Depends(require_admin)):
+    """删除指定的交易单（包括相关的更新记录和状态记录）- 仅管理员"""
     con = sqlite3.connect(store.db_path)
     try:
         # 检查交易单是否存在
@@ -589,7 +656,7 @@ async def delete_trade(trade_id: int, user_id: int = Depends(get_current_user)):
         con.execute("DELETE FROM trades WHERE id=?", (trade_id,))
         
         con.commit()
-        print(f'[API] ✅ 用户 {user_id} 删除了交易单 {trade_id}')
+        print(f'[API] ✅ 用户 {user_info["user_id"]} 删除了交易单 {trade_id}')
         return {"success": True, "message": "交易单已删除"}
     except HTTPException:
         raise
@@ -601,8 +668,8 @@ async def delete_trade(trade_id: int, user_id: int = Depends(get_current_user)):
         con.close()
 
 @app.post("/api/trades/{trade_id}/close")
-async def close_trade(trade_id: int, user_id: int = Depends(get_current_user)):
-    """手动结单：将活跃交易单标记为已结束"""
+async def close_trade(trade_id: int, user_info: dict = Depends(require_admin)):
+    """手动结单：将活跃交易单标记为已结束 - 仅管理员"""
     con = sqlite3.connect(store.db_path)
     try:
         # 获取交易单信息
@@ -677,7 +744,7 @@ async def close_trade(trade_id: int, user_id: int = Depends(get_current_user)):
         )
         
         con.commit()
-        print(f'[API] ✅ 用户 {user_id} 手动结单 {trade_id}: {final_status}, 盈亏: {round(pnl_points, 2)}点')
+        print(f'[API] ✅ 用户 {user_info["user_id"]} 手动结单 {trade_id}: {final_status}, 盈亏: {round(pnl_points, 2)}点')
         return {
             "success": True, 
             "message": f"交易单已结单: {final_status}",
@@ -693,6 +760,284 @@ async def close_trade(trade_id: int, user_id: int = Depends(get_current_user)):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"手动结单失败: {str(e)}")
+    finally:
+        con.close()
+
+# 用户管理API（仅管理员）
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "user"  # 默认为普通用户
+    note: Optional[str] = None
+
+class UpdateUserRequest(BaseModel):
+    username: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    note: Optional[str] = None
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    role: str
+    note: Optional[str] = None
+    created_at: int
+    updated_at: Optional[int]
+
+class BatchDeleteRequest(BaseModel):
+    user_ids: List[int]
+
+class UsersResponse(BaseModel):
+    success: bool
+    data: List[UserResponse]
+
+@app.get("/api/users", response_model=UsersResponse)
+async def get_users(user_info: dict = Depends(require_admin)):
+    """获取所有用户列表 - 仅管理员"""
+    con = sqlite3.connect(USER_DB_PATH)
+    try:
+        cur = con.execute(
+            "SELECT id, username, role, note, created_at, updated_at FROM users ORDER BY id DESC"
+        )
+        users = []
+        for row in cur.fetchall():
+            user_id, username, role, note, created_at, updated_at = row
+            users.append(UserResponse(
+                id=user_id,
+                username=username,
+                role=role or "user",
+                note=note,
+                created_at=created_at or 0,
+                updated_at=updated_at
+            ))
+        return UsersResponse(success=True, data=users)
+    finally:
+        con.close()
+
+@app.post("/api/users", response_model=UserResponse)
+async def create_user(request: CreateUserRequest, user_info: dict = Depends(require_admin)):
+    """创建新用户 - 仅管理员"""
+    if request.role not in ["admin", "user"]:
+        raise HTTPException(status_code=400, detail="角色必须是 'admin' 或 'user'")
+    
+    con = sqlite3.connect(USER_DB_PATH)
+    try:
+        # 检查用户名是否已存在
+        cur = con.execute("SELECT id FROM users WHERE username=?", (request.username,))
+        if cur.fetchone():
+            raise HTTPException(status_code=400, detail="用户名已存在")
+        
+        # 创建用户
+        now = int(time.time())
+        password_hash = hash_password(request.password)
+        cur = con.execute(
+            "INSERT INTO users(username, password_hash, role, note, created_at, updated_at) VALUES(?,?,?,?,?,?)",
+            (request.username, password_hash, request.role, request.note, now, now)
+        )
+        con.commit()
+        
+        user_id = cur.lastrowid
+        return UserResponse(
+            id=user_id,
+            username=request.username,
+            role=request.role,
+            note=request.note,
+            created_at=now,
+            updated_at=now
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        con.rollback()
+        raise HTTPException(status_code=500, detail=f"创建用户失败: {str(e)}")
+    finally:
+        con.close()
+
+@app.put("/api/users/{user_id}", response_model=UserResponse)
+async def update_user(user_id: int, request: UpdateUserRequest, user_info: dict = Depends(require_admin)):
+    """更新用户信息 - 仅管理员"""
+    if request.role and request.role not in ["admin", "user"]:
+        raise HTTPException(status_code=400, detail="角色必须是 'admin' 或 'user'")
+    
+    con = sqlite3.connect(USER_DB_PATH)
+    try:
+        # 检查用户是否存在
+        cur = con.execute("SELECT id, username, role FROM users WHERE id=?", (user_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        
+        # 构建更新语句
+        updates = []
+        params = []
+        
+        if request.username:
+            # 检查新用户名是否已被其他用户使用
+            check_cur = con.execute("SELECT id FROM users WHERE username=? AND id!=?", (request.username, user_id))
+            if check_cur.fetchone():
+                raise HTTPException(status_code=400, detail="用户名已被使用")
+            updates.append("username=?")
+            params.append(request.username)
+        
+        if request.password:
+            password_hash = hash_password(request.password)
+            updates.append("password_hash=?")
+            params.append(password_hash)
+        
+        if request.role:
+            updates.append("role=?")
+            params.append(request.role)
+        
+        if request.note is not None:  # 允许设置为空字符串
+            updates.append("note=?")
+            params.append(request.note)
+        
+        if not updates:
+            raise HTTPException(status_code=400, detail="没有要更新的字段")
+        
+        updates.append("updated_at=?")
+        params.append(int(time.time()))
+        params.append(user_id)
+        
+        con.execute(
+            f"UPDATE users SET {', '.join(updates)} WHERE id=?",
+            params
+        )
+        con.commit()
+        
+        # 返回更新后的用户信息
+        cur = con.execute("SELECT id, username, role, note, created_at, updated_at FROM users WHERE id=?", (user_id,))
+        row = cur.fetchone()
+        return UserResponse(
+            id=row[0],
+            username=row[1],
+            role=row[2] or "user",
+            note=row[3],
+            created_at=row[4] or 0,
+            updated_at=row[5]
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        con.rollback()
+        raise HTTPException(status_code=500, detail=f"更新用户失败: {str(e)}")
+    finally:
+        con.close()
+
+@app.delete("/api/users/{user_id}")
+async def delete_user(user_id: int, user_info: dict = Depends(require_admin)):
+    """删除用户 - 仅管理员"""
+    # 不能删除自己
+    if user_id == user_info["user_id"]:
+        raise HTTPException(status_code=400, detail="不能删除自己的账户")
+    
+    con = sqlite3.connect(USER_DB_PATH)
+    try:
+        # 检查用户是否存在
+        cur = con.execute("SELECT id FROM users WHERE id=?", (user_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="用户不存在")
+        
+        # 删除用户的所有会话
+        con.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+        
+        # 删除用户
+        con.execute("DELETE FROM users WHERE id=?", (user_id,))
+        con.commit()
+        
+        return {"success": True, "message": "用户已删除"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        con.rollback()
+        raise HTTPException(status_code=500, detail=f"删除用户失败: {str(e)}")
+    finally:
+        con.close()
+
+@app.post("/api/users/batch-delete")
+async def batch_delete_users(request: BatchDeleteRequest, user_info: dict = Depends(require_admin)):
+    """批量删除用户 - 仅管理员"""
+    if not request.user_ids:
+        raise HTTPException(status_code=400, detail="请选择要删除的用户")
+    
+    # 不能删除自己
+    if user_info["user_id"] in request.user_ids:
+        raise HTTPException(status_code=400, detail="不能删除自己的账户")
+    
+    con = sqlite3.connect(USER_DB_PATH)
+    try:
+        # 检查所有用户是否存在
+        placeholders = ",".join("?" * len(request.user_ids))
+        cur = con.execute(f"SELECT id FROM users WHERE id IN ({placeholders})", request.user_ids)
+        existing_ids = [row[0] for row in cur.fetchall()]
+        
+        if len(existing_ids) != len(request.user_ids):
+            raise HTTPException(status_code=404, detail="部分用户不存在")
+        
+        # 删除用户的所有会话
+        con.execute(f"DELETE FROM sessions WHERE user_id IN ({placeholders})", request.user_ids)
+        
+        # 删除用户
+        con.execute(f"DELETE FROM users WHERE id IN ({placeholders})", request.user_ids)
+        con.commit()
+        
+        return {"success": True, "message": f"已删除 {len(request.user_ids)} 个用户"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        con.rollback()
+        raise HTTPException(status_code=500, detail=f"批量删除用户失败: {str(e)}")
+    finally:
+        con.close()
+
+@app.get("/api/users/{user_id}/password-info")
+async def get_user_password_info(user_id: int, user_info: dict = Depends(require_admin)):
+    """获取用户密码信息（用于显示提示）- 仅管理员"""
+    con = sqlite3.connect(USER_DB_PATH)
+    try:
+        cur = con.execute(
+            "SELECT password_hash FROM users WHERE id=?",
+            (user_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        
+        password_hash = row[0]
+        # 返回密码哈希的前8位作为提示（不返回完整哈希）
+        return {
+            "success": True,
+            "data": {
+                "has_password": True,
+                "password_hint": password_hash[:8] + "..." if password_hash else None
+            }
+        }
+    finally:
+        con.close()
+
+@app.get("/api/auth/me")
+async def get_current_user_info(user_info: dict = Depends(get_current_user_with_role)):
+    """获取当前登录用户信息"""
+    con = sqlite3.connect(USER_DB_PATH)
+    try:
+        cur = con.execute(
+            "SELECT id, username, role, note, created_at FROM users WHERE id=?",
+            (user_info["user_id"],)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        
+        return {
+            "success": True,
+            "data": {
+                "id": row[0],
+                "username": row[1],
+                "role": row[2] or "user",
+                "note": row[3],
+                "created_at": row[4] or 0
+            }
+        }
     finally:
         con.close()
 

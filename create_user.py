@@ -41,11 +41,21 @@ def create_user(username: str, password: str):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
+                role TEXT DEFAULT 'user',
                 created_at INTEGER,
                 updated_at INTEGER
             )
             """
         )
+        # 添加 role 字段（如果表已存在但没有该字段）
+        try:
+            con.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
+            con.execute("UPDATE users SET role='user' WHERE role IS NULL")
+            con.commit()
+        except sqlite3.OperationalError:
+            # 字段已存在，但确保所有用户都有 role
+            con.execute("UPDATE users SET role='user' WHERE role IS NULL")
+            con.commit()
         con.execute(
             """
             CREATE TABLE IF NOT EXISTS sessions (
@@ -82,9 +92,18 @@ def create_user(username: str, password: str):
         # 创建新用户
         now = int(time.time())
         password_hash = hash_password(password)
+        # 询问用户角色
+        role = "user"
+        if len(sys.argv) >= 4:
+            role = sys.argv[3]
+        else:
+            role_input = input("用户角色 (admin/user，默认: user): ").strip().lower()
+            if role_input in ["admin", "user"]:
+                role = role_input
+        
         con.execute(
-            "INSERT INTO users(username, password_hash, created_at, updated_at) VALUES(?,?,?,?)",
-            (username, password_hash, now, now)
+            "INSERT INTO users(username, password_hash, role, created_at, updated_at) VALUES(?,?,?,?,?)",
+            (username, password_hash, role, now, now)
         )
         con.commit()
         print(f"✅ 用户 '{username}' 创建成功")
