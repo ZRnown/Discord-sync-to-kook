@@ -9,6 +9,9 @@ export function getStatusColor(status: TradeStatus): string {
     已止损: "bg-loss-muted text-loss",
     带单主动止盈: "bg-info text-foreground",
     带单主动止损: "bg-warning text-primary-foreground",
+    部分出局: "bg-info/80 text-foreground",
+    部分止盈: "bg-profit/60 text-primary-foreground",
+    部分止损: "bg-loss/60 text-destructive-foreground",
   }
   return colorMap[status] || "bg-neutral text-foreground"
 }
@@ -22,6 +25,9 @@ export function getStatusBorderColor(status: TradeStatus): string {
     已止损: "border-loss/30",
     带单主动止盈: "border-info/50",
     带单主动止损: "border-warning/50",
+    部分出局: "border-info/40",
+    部分止盈: "border-profit/40",
+    部分止损: "border-loss/40",
   }
   return colorMap[status] || "border-neutral/50"
 }

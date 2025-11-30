@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server"
 
 /**
- * DELETE /api/trades/[id]
- * 删除指定的交易单
+ * POST /api/trades/[id]/close
+ * 手动结单
  */
-export async function DELETE(
+export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
@@ -12,7 +12,7 @@ export async function DELETE(
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
     const params = await context.params
     const tradeId = params.id
-    const url = `${API_BASE_URL}/api/trades/${tradeId}`
+    const url = `${API_BASE_URL}/api/trades/${tradeId}/close`
     
     // 从请求头中获取Authorization token
     const authHeader = request.headers.get("authorization")
@@ -24,7 +24,7 @@ export async function DELETE(
     }
     
     const response = await fetch(url, {
-      method: "DELETE",
+      method: "POST",
       headers,
       cache: "no-store",
     })
@@ -40,17 +40,18 @@ export async function DELETE(
     }
     
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      const errorData = await response.json().catch(() => ({}))
+      throw new Error(errorData.detail || errorData.error || errorData.message || `HTTP ${response.status}: ${response.statusText}`)
     }
 
     const data = await response.json()
     return NextResponse.json(data)
   } catch (error) {
-    console.error("删除交易单失败:", error)
+    console.error("手动结单失败:", error)
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "删除交易单失败",
+        error: error instanceof Error ? error.message : "手动结单失败",
       },
       { status: 500 }
     )
