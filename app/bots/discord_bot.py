@@ -201,6 +201,7 @@ class MembershipCog(commands.Cog):
     @app_commands.command(name="trial_message", description="发送体验权限申请消息（仅管理员）")
     @app_commands.describe(channel="要发送消息的频道（留空则在当前频道发送）")
     async def send_trial_message(self, interaction: discord.Interaction, channel: str = None):
+        """发送体验权限申请消息到指定频道"""
         # 检查管理员权限
         admin_roles = set(self.settings.ADMIN_ROLE_IDS)
         if admin_roles and isinstance(interaction.user, discord.Member):
@@ -889,15 +890,45 @@ def setup_discord_bot(bot, token):
     async def setup_hook():
         # 注册 Cogs 并同步命令
         try:
+            print('[Discord] 🔄 开始注册 Cogs 和同步命令...')
+            
             # 先注册MembershipCog，因为它需要注册持久化视图
             membership_cog = MembershipCog(bot)
             await bot.add_cog(membership_cog)
+            print('[Discord] ✅ MembershipCog 已注册')
+            
             await bot.add_cog(OKXCog(bot))
+            print('[Discord] ✅ OKXCog 已注册')
+            
             await bot.add_cog(MonitorCog(bot))
+            print('[Discord] ✅ MonitorCog 已注册')
+            
+            # 列出所有已注册的命令
+            all_commands = []
+            for cmd in bot.tree.walk_commands():
+                all_commands.append(cmd.name)
+            print(f'[Discord] 📋 已注册的命令: {", ".join(all_commands) if all_commands else "无"}')
+            
+            # 同步命令到 Discord
             synced = await bot.tree.sync()
-            print(f'[Discord] ✅ 同步了 {len(synced)} 个斜杠命令')
+            print(f'[Discord] ✅ 同步了 {len(synced)} 个斜杠命令到 Discord')
+            
+            # 列出同步的命令
+            if synced:
+                synced_names = [cmd.name for cmd in synced]
+                print(f'[Discord] 📋 已同步的命令: {", ".join(synced_names)}')
+            
+            # 验证 trial_message 命令是否存在
+            trial_cmd = bot.tree.get_command('trial_message')
+            if trial_cmd:
+                print(f'[Discord] ✅ trial_message 命令已找到: {trial_cmd}')
+            else:
+                print(f'[Discord] ⚠️ 警告: trial_message 命令未找到，可能需要重新同步')
+                
         except Exception as e:
             print(f'[Discord] ❌ setup_hook 初始化出错: {e}')
+            import traceback
+            traceback.print_exc()
 
     @bot.event
     async def on_ready():
@@ -914,5 +945,39 @@ def setup_discord_bot(bot, token):
     async def ping(interaction: discord.Interaction):
         latency = round(bot.latency * 1000)
         await interaction.response.send_message(f'pong! in {latency}ms')
+    
+    @bot.tree.command(name='sync_commands', description='重新同步命令（仅管理员）')
+    @app_commands.describe(force='强制同步（清除所有命令后重新注册）')
+    async def sync_commands(interaction: discord.Interaction, force: bool = False):
+        """重新同步命令到 Discord"""
+        # 检查管理员权限
+        settings = get_settings()
+        admin_roles = set(settings.ADMIN_ROLE_IDS)
+        if admin_roles and isinstance(interaction.user, discord.Member):
+            user_roles = {str(r.id) for r in interaction.user.roles}
+            if not (user_roles & admin_roles):
+                await interaction.response.send_message("❌ 无权限，仅管理员可使用此命令", ephemeral=True)
+                return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            if force:
+                # 清除所有命令（需要先获取所有命令）
+                bot.tree.clear_commands(guild=None)
+                await bot.tree.sync()
+                await interaction.followup.send("✅ 已清除所有命令，请重新启动机器人以重新注册命令", ephemeral=True)
+            else:
+                # 重新同步命令
+                synced = await bot.tree.sync()
+                await interaction.followup.send(
+                    f"✅ 已重新同步 {len(synced)} 个命令\n"
+                    f"📋 命令列表: {', '.join([cmd.name for cmd in synced])}",
+                    ephemeral=True
+                )
+        except Exception as e:
+            await interaction.followup.send(f"❌ 同步失败: {e}", ephemeral=True)
+            import traceback
+            traceback.print_exc()
 
     return bot
