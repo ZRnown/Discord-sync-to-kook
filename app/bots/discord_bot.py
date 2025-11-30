@@ -844,6 +844,7 @@ def create_discord_bot(token, config=None):
 def setup_discord_bot(bot, token):
     @bot.event
     async def setup_hook():
+        print('[Discord] 🔄 setup_hook: 开始初始化...')
         # 注册 Cogs 并同步命令
         try:
             # 先注册MembershipCog，因为它需要注册持久化视图
@@ -904,8 +905,18 @@ def setup_discord_bot(bot, token):
             traceback.print_exc()
 
     @bot.event
+    async def on_connect():
+        print('[Discord] 🔌 已连接到 Discord Gateway')
+    
+    @bot.event
+    async def on_resumed():
+        print('[Discord] 🔄 连接已恢复')
+    
+    @bot.event
     async def on_ready():
         print(f'[Discord] ✅ {bot.user} 已成功登录！')
+        print(f'[Discord] 📊 Bot ID: {bot.user.id}')
+        print(f'[Discord] 📊 已加入 {len(bot.guilds)} 个服务器')
         # 在 on_ready 中再次尝试同步命令（如果 setup_hook 中的同步失败）
         try:
             from app.config.settings import get_settings
