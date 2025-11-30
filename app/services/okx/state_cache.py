@@ -37,9 +37,9 @@ class OKXStateCache:
                 for inst in inst_ids:
                     try:
                         res = self.client.request("GET", "/api/v5/market/ticker", {"instId": inst}, timeout=8)
-                    if res and res.get('code') == '0' and res.get('data'):
-                        t = res['data'][0]
-                        try:
+                        if res and res.get('code') == '0' and res.get('data'):
+                            t = res['data'][0]
+                            try:
                                 new_price = float(t['last'])
                                 self.prices[inst] = new_price
                                 success_count += 1
