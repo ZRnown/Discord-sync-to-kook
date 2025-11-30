@@ -37,9 +37,9 @@ class OKXStateCache:
                 for inst in inst_ids:
                     try:
                         res = self.client.request("GET", "/api/v5/market/ticker", {"instId": inst}, timeout=8)
-                    if res and res.get('code') == '0' and res.get('data'):
-                        t = res['data'][0]
-                        try:
+                        if res and res.get('code') == '0' and res.get('data'):
+                            t = res['data'][0]
+                            try:
                                 new_price = float(t['last'])
                                 self.prices[inst] = new_price
                                 success_count += 1
@@ -50,6 +50,7 @@ class OKXStateCache:
                             print(f'[OKX] ⚠️ API返回错误 - {inst}: code={res.get("code")}, msg={res.get("msg")}')
                     except Exception as e:
                         print(f'[OKX] ⚠️ 获取 {inst} 价格失败: {e}')
+                        consecutive_errors += 1
                 
                 # 如果所有请求都失败，增加错误计数
                 if success_count == 0 and inst_ids:
