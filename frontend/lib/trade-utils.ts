@@ -2,6 +2,7 @@ import type { Trade, TradeStatus, TradeUpdate } from "./types"
 
 export function getStatusColor(status: TradeStatus): string {
   const colorMap: Record<TradeStatus, string> = {
+    待入场: "bg-muted text-muted-foreground",
     未进场: "bg-neutral text-foreground",
     浮盈: "bg-profit text-primary-foreground",
     浮亏: "bg-loss text-destructive-foreground",
@@ -18,6 +19,7 @@ export function getStatusColor(status: TradeStatus): string {
 
 export function getStatusBorderColor(status: TradeStatus): string {
   const colorMap: Record<TradeStatus, string> = {
+    待入场: "border-muted/50",
     未进场: "border-neutral/50",
     浮盈: "border-profit/50",
     浮亏: "border-loss/50",

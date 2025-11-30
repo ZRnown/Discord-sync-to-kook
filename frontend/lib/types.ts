@@ -1,4 +1,4 @@
-export type TradeStatus = "未进场" | "浮盈" | "浮亏" | "已止盈" | "已止损" | "带单主动止盈" | "带单主动止损" | "部分出局" | "部分止盈" | "部分止损"
+export type TradeStatus = "待入场" | "未进场" | "浮盈" | "浮亏" | "已止盈" | "已止损" | "带单主动止盈" | "带单主动止损" | "部分出局" | "部分止盈" | "部分止损"
 
 export type TradeSide = "long" | "short"
 

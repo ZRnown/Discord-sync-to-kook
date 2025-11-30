@@ -43,6 +43,7 @@ export function TradeCard({ trade, onClose }: TradeCardProps) {
 
   const isLong = trade.side === "long"
   const isProfitable = trade.pnl_points >= 0
+  const isPending = trade.status === "待入场"
   
   // 检查是否已结束
   const ENDED_STATUSES = ["已止盈", "已止损", "带单主动止盈", "带单主动止损"]
@@ -97,6 +98,20 @@ export function TradeCard({ trade, onClose }: TradeCardProps) {
           <StatusBadge status={trade.status} />
         </div>
 
+        {/* 待入场提示 */}
+        {isPending && (
+          <div className="bg-muted/50 rounded-lg px-4 py-3 border border-muted">
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Clock className="w-4 h-4" />
+              <p className="text-sm font-medium">等待币价到达入场价</p>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              当前价: {trade.current_price ? formatPrice(trade.current_price, trade.symbol) : "获取中..."} | 
+              入场价: {formatPrice(trade.entry_price, trade.symbol)}
+            </p>
+          </div>
+        )}
+
         {/* 价格信息 */}
         <div className="grid grid-cols-3 gap-4">
           <div>
@@ -112,17 +127,23 @@ export function TradeCard({ trade, onClose }: TradeCardProps) {
                 priceAnimation === "down" && "price-down text-loss",
               )}
             >
-              {formatPrice(trade.current_price, trade.symbol)}
+              {trade.current_price ? formatPrice(trade.current_price, trade.symbol) : "—"}
             </p>
           </div>
           <div className="text-right">
             <p className="text-xs text-muted-foreground mb-1">盈亏</p>
-            <p className={cn("font-mono font-bold text-lg", isProfitable ? "text-profit" : "text-loss")}>
-              {formatPnL(trade.pnl_points)}
-            </p>
-            <p className={cn("text-xs font-mono", isProfitable ? "text-profit/80" : "text-loss/80")}>
-              {formatPercent(trade.pnl_percent)}
-            </p>
+            {isPending ? (
+              <p className="font-mono text-sm text-muted-foreground">还没到</p>
+            ) : (
+              <>
+                <p className={cn("font-mono font-bold text-lg", isProfitable ? "text-profit" : "text-loss")}>
+                  {formatPnL(trade.pnl_points || 0)}
+                </p>
+                <p className={cn("text-xs font-mono", isProfitable ? "text-profit/80" : "text-loss/80")}>
+                  {formatPercent(trade.pnl_percent || 0)}
+                </p>
+              </>
+            )}
           </div>
         </div>
 
@@ -148,15 +169,17 @@ export function TradeCard({ trade, onClose }: TradeCardProps) {
           </div>
         )}
 
-        {/* 价格进度条 */}
-        <PriceProgressBar
-          currentPrice={trade.current_price}
-          entryPrice={trade.entry_price}
-          takeProfit={trade.take_profit}
-          stopLoss={trade.stop_loss}
-          side={trade.side}
-          symbol={trade.symbol}
-        />
+        {/* 价格进度条（待入场时不显示） */}
+        {!isPending && (
+          <PriceProgressBar
+            currentPrice={trade.current_price}
+            entryPrice={trade.entry_price}
+            takeProfit={trade.take_profit}
+            stopLoss={trade.stop_loss}
+            side={trade.side}
+            symbol={trade.symbol}
+          />
+        )}
 
         {/* 止盈止损信息 */}
         <div className="grid grid-cols-2 gap-4 text-sm">
@@ -176,7 +199,7 @@ export function TradeCard({ trade, onClose }: TradeCardProps) {
           <Clock className="w-3 h-3 mr-1" />
           <span>{trade.created_at_str}</span>
           </div>
-          {!isEnded && (
+          {!isEnded && !isPending && (
             <Button
               variant="outline"
               size="sm"
