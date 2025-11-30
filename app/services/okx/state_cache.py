@@ -1,6 +1,6 @@
 import threading
 import time
-from typing import Dict, Set
+from typing import Dict
 from app.config.settings import get_settings
 from .client import OKXClient
 
@@ -12,9 +12,6 @@ class OKXStateCache:
         self.prices: Dict[str, float] = {}
         self._stop = False
         self._thread = None
-        # 动态跟踪的币种列表（除了BTC和ETH）
-        self._tracked_symbols: Set[str] = set()
-        self._symbols_lock = threading.Lock()
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -26,52 +23,23 @@ class OKXStateCache:
     def stop(self):
         self._stop = True
 
-    def add_symbol(self, symbol: str):
-        """动态添加需要跟踪的币种（排除BTC和ETH）"""
-        # 检查是否是BTC或ETH
-        if self._is_btc_or_eth(symbol):
-            return  # BTC和ETH已经在配置中，不需要单独添加
-        
-        with self._symbols_lock:
-            if symbol not in self._tracked_symbols:
-                self._tracked_symbols.add(symbol)
-                print(f'[OKX] ✅ 添加新币种到价格跟踪列表: {symbol}')
-    
-    def _is_btc_or_eth(self, symbol: str) -> bool:
-        """检查币种是否是BTC或ETH"""
-        symbol_upper = symbol.upper()
-        return 'BTC' in symbol_upper or 'ETH' in symbol_upper
-    
-    def _get_all_symbols(self) -> list:
-        """获取所有需要跟踪的币种（配置的 + 动态添加的）"""
-        # 基础币种（从配置中获取，通常是BTC和ETH）
-        base_symbols = self.settings.OKX_INST_IDS or []
-        
-        # 动态添加的币种
-        with self._symbols_lock:
-            dynamic_symbols = list(self._tracked_symbols)
-        
-        # 合并并去重
-        all_symbols = list(set(base_symbols + dynamic_symbols))
-        return all_symbols
-
     def _run(self):
         interval = max(5.0, float(self.settings.OKX_POLL_INTERVAL_SEC))
-        print(f'[OKX] ✅ 价格轮询已启动 - 间隔: {interval}秒')
+        print(f'[OKX] ✅ 价格轮询已启动 - 间隔: {interval}秒, 交易对: {", ".join(self.settings.OKX_INST_IDS or [])}')
         consecutive_errors = 0
         max_consecutive_errors = 10  # 连续10次错误后降低频率
         
         while not self._stop:
             try:
-                # 获取所有需要跟踪的币种（配置的 + 动态添加的）
-                inst_ids = self._get_all_symbols()
+                # 刷新价格（从所有配置的交易对）
+                inst_ids = self.settings.OKX_INST_IDS or []
                 success_count = 0
                 for inst in inst_ids:
                     try:
                         res = self.client.request("GET", "/api/v5/market/ticker", {"instId": inst}, timeout=8)
-                        if res and res.get('code') == '0' and res.get('data'):
-                            t = res['data'][0]
-                            try:
+                    if res and res.get('code') == '0' and res.get('data'):
+                        t = res['data'][0]
+                        try:
                                 new_price = float(t['last'])
                                 self.prices[inst] = new_price
                                 success_count += 1
@@ -107,7 +75,3 @@ class OKXStateCache:
     def get_price(self, inst_id: str) -> float:
         """获取指定币种的实时价格"""
         return self.prices.get(inst_id)
-    
-    def get_all_prices(self) -> Dict[str, float]:
-        """获取所有已缓存的价格"""
-        return self.prices.copy()
