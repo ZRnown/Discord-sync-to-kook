@@ -24,9 +24,10 @@ export function useAuth() {
   useEffect(() => {
     if (isAuthenticated()) {
       const role = getUserRole()
-      setUserRoleState(role)
-      // 如果没有保存角色，从API获取
-      if (!role) {
+      if (role) {
+        setUserRoleState(role)
+      } else {
+        // 如果没有保存角色，从API获取
         fetchUserInfo()
       }
     }
@@ -47,9 +48,12 @@ export function useAuth() {
         const role = data.data.role || "user"
         setUserRole(role)
         setUserRoleState(role)
+        console.log("[Auth] 用户角色已更新:", role)
+      } else {
+        console.warn("[Auth] 获取用户信息失败:", data)
       }
     } catch (err) {
-      console.error("获取用户信息失败:", err)
+      console.error("[Auth] 获取用户信息失败:", err)
     }
   }
 
@@ -73,6 +77,7 @@ export function useAuth() {
         const role = data.role || "user"
         setUserRole(role)
         setUserRoleState(role)
+        console.log("[Auth] 登录成功，用户角色:", role, "是否为管理员:", role === "admin")
         router.push("/")
         return { success: true }
       } else {
