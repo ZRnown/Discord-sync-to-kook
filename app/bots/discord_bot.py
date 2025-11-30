@@ -851,14 +851,76 @@ def setup_discord_bot(bot, token):
             await bot.add_cog(membership_cog)
             await bot.add_cog(OKXCog(bot))
             await bot.add_cog(MonitorCog(bot))
-            synced = await bot.tree.sync()
-            print(f'[Discord] ✅ 同步了 {len(synced)} 个斜杠命令')
+            
+            # 同步命令 - 如果有 GUILD_ID，先同步到 guild（更快），否则同步全局命令
+            from app.config.settings import get_settings
+            settings = get_settings()
+            
+            # 等待 bot 完全就绪
+            await bot.wait_until_ready()
+            
+            if settings.GUILD_ID:
+                try:
+                    guild = discord.Object(id=int(settings.GUILD_ID))
+                    synced = await bot.tree.sync(guild=guild)
+                    print(f'[Discord] ✅ 同步了 {len(synced)} 个斜杠命令到服务器 {settings.GUILD_ID}')
+                    # 列出所有同步的命令
+                    if synced:
+                        command_names = [cmd.name for cmd in synced]
+                        print(f'[Discord] 📋 已同步的命令: {", ".join(command_names)}')
+                    else:
+                        print(f'[Discord] ⚠️ 没有命令被同步，可能命令已存在或同步失败')
+                except Exception as guild_error:
+                    print(f'[Discord] ⚠️ 同步到服务器失败，尝试全局同步: {guild_error}')
+                    import traceback
+                    traceback.print_exc()
+                    try:
+                        synced = await bot.tree.sync()
+                        print(f'[Discord] ✅ 全局同步了 {len(synced)} 个斜杠命令')
+                        if synced:
+                            command_names = [cmd.name for cmd in synced]
+                            print(f'[Discord] 📋 已同步的命令: {", ".join(command_names)}')
+                    except Exception as global_error:
+                        print(f'[Discord] ❌ 全局同步也失败: {global_error}')
+                        import traceback
+                        traceback.print_exc()
+            else:
+                try:
+                    synced = await bot.tree.sync()
+                    print(f'[Discord] ✅ 全局同步了 {len(synced)} 个斜杠命令')
+                    # 列出所有同步的命令
+                    if synced:
+                        command_names = [cmd.name for cmd in synced]
+                        print(f'[Discord] 📋 已同步的命令: {", ".join(command_names)}')
+                    else:
+                        print(f'[Discord] ⚠️ 没有命令被同步，可能命令已存在或同步失败')
+                except Exception as sync_error:
+                    print(f'[Discord] ❌ 命令同步失败: {sync_error}')
+                    import traceback
+                    traceback.print_exc()
         except Exception as e:
             print(f'[Discord] ❌ setup_hook 初始化出错: {e}')
+            import traceback
+            traceback.print_exc()
 
     @bot.event
     async def on_ready():
         print(f'[Discord] ✅ {bot.user} 已成功登录！')
+        # 在 on_ready 中再次尝试同步命令（如果 setup_hook 中的同步失败）
+        try:
+            from app.config.settings import get_settings
+            settings = get_settings()
+            if settings.GUILD_ID:
+                guild = discord.Object(id=int(settings.GUILD_ID))
+                synced = await bot.tree.sync(guild=guild)
+                if synced:
+                    print(f'[Discord] ✅ on_ready: 重新同步了 {len(synced)} 个命令到服务器')
+            else:
+                synced = await bot.tree.sync()
+                if synced:
+                    print(f'[Discord] ✅ on_ready: 重新同步了 {len(synced)} 个全局命令')
+        except Exception as e:
+            print(f'[Discord] ⚠️ on_ready 中同步命令失败: {e}')
 
     @bot.event
     async def on_message(message):
@@ -866,6 +928,29 @@ def setup_discord_bot(bot, token):
             await bot.process_commands(message)
             return
         await bot.process_commands(message)
+
+    @bot.tree.error
+    async def on_app_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+        """处理应用命令错误"""
+        if isinstance(error, discord.app_commands.CommandNotFound):
+            print(f'[Discord] ❌ 命令未找到: {error}')
+            if interaction.response.is_done():
+                await interaction.followup.send("❌ 命令未找到，请等待命令同步完成或重启机器人", ephemeral=True)
+            else:
+                await interaction.response.send_message("❌ 命令未找到，请等待命令同步完成或重启机器人", ephemeral=True)
+        elif isinstance(error, discord.app_commands.MissingPermissions):
+            if interaction.response.is_done():
+                await interaction.followup.send("❌ 您没有权限使用此命令", ephemeral=True)
+            else:
+                await interaction.response.send_message("❌ 您没有权限使用此命令", ephemeral=True)
+        else:
+            print(f'[Discord] ❌ 命令执行错误: {error}')
+            import traceback
+            traceback.print_exc()
+            if interaction.response.is_done():
+                await interaction.followup.send(f"❌ 命令执行出错: {str(error)}", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"❌ 命令执行出错: {str(error)}", ephemeral=True)
 
     @bot.tree.command(name='ping', description='检查机器人延迟')
     async def ping(interaction: discord.Interaction):
