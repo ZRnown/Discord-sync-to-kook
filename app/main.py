@@ -1,4 +1,5 @@
 import threading
+import discord
 from app.config.settings import get_settings
 from app.bots.discord_bot import create_discord_bot, setup_discord_bot
 
