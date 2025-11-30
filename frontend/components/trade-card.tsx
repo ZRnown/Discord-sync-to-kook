@@ -8,8 +8,8 @@ import { PriceProgressBar } from "./price-progress-bar"
 import { cn } from "@/lib/utils"
 import { formatPrice, formatPnL, formatPercent, getStatusBorderColor } from "@/lib/trade-utils"
 import type { Trade } from "@/lib/types"
-import { TrendingUp, TrendingDown, Clock, X } from "lucide-react"
-import { closeTrade } from "@/lib/api-client"
+import { TrendingUp, TrendingDown, Clock, X, Trash2 } from "lucide-react"
+import { closeTrade, deleteTrade } from "@/lib/api-client"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,13 +24,16 @@ import {
 interface TradeCardProps {
   trade: Trade
   onClose?: () => void
+  onDelete?: (tradeId: number) => void
 }
 
-export function TradeCard({ trade, onClose }: TradeCardProps) {
+export function TradeCard({ trade, onClose, onDelete }: TradeCardProps) {
   const prevPriceRef = useRef(trade.current_price)
   const [priceAnimation, setPriceAnimation] = useState<"up" | "down" | null>(null)
   const [showCloseDialog, setShowCloseDialog] = useState(false)
   const [isClosing, setIsClosing] = useState(false)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   useEffect(() => {
     if (trade.current_price !== prevPriceRef.current) {
@@ -42,8 +45,8 @@ export function TradeCard({ trade, onClose }: TradeCardProps) {
   }, [trade.current_price])
 
   const isLong = trade.side === "long"
-  const isProfitable = trade.pnl_points >= 0
   const isPending = trade.status === "待入场"
+  const isProfitable = !isPending && trade.pnl_points !== null && trade.pnl_points !== undefined && trade.pnl_points >= 0
   
   // 检查是否已结束
   const ENDED_STATUSES = ["已止盈", "已止损", "带单主动止盈", "带单主动止损"]
@@ -62,6 +65,22 @@ export function TradeCard({ trade, onClose }: TradeCardProps) {
       alert(error instanceof Error ? error.message : "手动结单失败")
     } finally {
       setIsClosing(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    setIsDeleting(true)
+    try {
+      await deleteTrade(trade.id)
+      setShowDeleteDialog(false)
+      if (onDelete) {
+        onDelete(trade.id)
+      }
+    } catch (error) {
+      console.error("删除交易单失败:", error)
+      alert(error instanceof Error ? error.message : "删除失败")
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -136,12 +155,12 @@ export function TradeCard({ trade, onClose }: TradeCardProps) {
               <p className="font-mono text-sm text-muted-foreground">还没到</p>
             ) : (
               <>
-                <p className={cn("font-mono font-bold text-lg", isProfitable ? "text-profit" : "text-loss")}>
+            <p className={cn("font-mono font-bold text-lg", isProfitable ? "text-profit" : "text-loss")}>
                   {formatPnL(trade.pnl_points || 0)}
-                </p>
-                <p className={cn("text-xs font-mono", isProfitable ? "text-profit/80" : "text-loss/80")}>
+            </p>
+            <p className={cn("text-xs font-mono", isProfitable ? "text-profit/80" : "text-loss/80")}>
                   {formatPercent(trade.pnl_percent || 0)}
-                </p>
+            </p>
               </>
             )}
           </div>
@@ -171,14 +190,14 @@ export function TradeCard({ trade, onClose }: TradeCardProps) {
 
         {/* 价格进度条（待入场时不显示） */}
         {!isPending && (
-          <PriceProgressBar
-            currentPrice={trade.current_price}
-            entryPrice={trade.entry_price}
-            takeProfit={trade.take_profit}
-            stopLoss={trade.stop_loss}
-            side={trade.side}
-            symbol={trade.symbol}
-          />
+        <PriceProgressBar
+          currentPrice={trade.current_price}
+          entryPrice={trade.entry_price}
+          takeProfit={trade.take_profit}
+          stopLoss={trade.stop_loss}
+          side={trade.side}
+          symbol={trade.symbol}
+        />
         )}
 
         {/* 止盈止损信息 */}
@@ -199,17 +218,32 @@ export function TradeCard({ trade, onClose }: TradeCardProps) {
           <Clock className="w-3 h-3 mr-1" />
           <span>{trade.created_at_str}</span>
           </div>
-          {!isEnded && !isPending && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowCloseDialog(true)}
-              className="h-7 text-xs gap-1.5"
-            >
-              <X className="w-3 h-3" />
-              手动结单
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {/* 待入场状态：显示删除按钮 */}
+            {isPending && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowDeleteDialog(true)}
+                className="h-7 text-xs gap-1.5 text-destructive hover:text-destructive"
+              >
+                <Trash2 className="w-3 h-3" />
+                删除
+              </Button>
+            )}
+            {/* 已入场但未结束：显示手动结单按钮 */}
+            {!isEnded && !isPending && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowCloseDialog(true)}
+                className="h-7 text-xs gap-1.5"
+              >
+                <X className="w-3 h-3" />
+                手动结单
+              </Button>
+            )}
+          </div>
         </div>
       </CardContent>
 
@@ -237,6 +271,38 @@ export function TradeCard({ trade, onClose }: TradeCardProps) {
               className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {isClosing ? "结单中..." : "确认结单"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* 删除确认对话框 */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除交易单</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要删除这个交易单吗？此操作无法撤销。
+              <br />
+              <span className="font-medium">{trade.symbol} - {trade.side === "long" ? "多" : "空"}</span>
+              {isPending && (
+                <>
+                  <br />
+                  <span className="text-sm text-muted-foreground">
+                    入场价: {formatPrice(trade.entry_price, trade.symbol)}
+                  </span>
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? "删除中..." : "确认删除"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

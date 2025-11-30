@@ -361,14 +361,18 @@ async def get_trades(
             if not status:
                 status = "未进场"
             
-            # 如果是"待入场"状态，尝试获取当前价格用于显示
-            if status == "待入场" and not current_price and symbol:
-                price = okx_cache.get_price(symbol)
-                if price:
-                    current_price = float(price)
-            
+            # 如果是"待入场"状态，尝试获取当前价格用于显示，但不重新计算状态
+            if status == "待入场":
+                # 待入场状态：只获取价格用于显示，不计算盈亏
+                if not current_price and symbol:
+                    price = okx_cache.get_price(symbol)
+                    if price:
+                        current_price = float(price)
+                # 待入场状态时，清空盈亏数据
+                pnl_points = None
+                pnl_percent = None
             # 如果交易已结束，不再更新价格和重新计算（保持最终状态）
-            if is_ended:
+            elif is_ended:
                 # 已结束的交易，不再获取实时价格，使用已保存的最终价格
                 # 如果trade_status_detail中有价格，使用它；否则使用entry_price作为显示
                 if not current_price:
@@ -382,14 +386,15 @@ async def get_trades(
             created_at_str = datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M:%S")
             
             try:
+                    # 如果是"待入场"状态，不计算盈亏
+                    if status == "待入场":
+                        final_pnl_points = None
+                        final_pnl_percent = None
+                        exited_pnl_points = None
+                        remaining_pnl_points = None
                     # 如果是部分出局，计算并显示已出局和剩余部分的盈亏
-                    final_pnl_points = pnl_points
-                    final_pnl_percent = pnl_percent
-                    exited_pnl_points = None
-                    remaining_pnl_points = None
-                    
-                    # 如果是部分出局，pnl_points 是剩余部分的盈亏，需要加上已出局部分的盈亏
-                    if partial_exit and exited_pnl is not None:
+                    elif partial_exit and exited_pnl is not None:
+                        # 如果是部分出局，pnl_points 是剩余部分的盈亏，需要加上已出局部分的盈亏
                         # 剩余部分的盈亏已经在 pnl_points 中
                         # 已出局部分的盈亏在 exited_pnl 中
                         # 总盈亏 = 已出局 + 剩余部分
@@ -404,6 +409,12 @@ async def get_trades(
                         # 总盈亏显示在 pnl_points 中
                         final_pnl_points = total_pnl
                         final_pnl_percent = total_pnl_percent
+                    else:
+                        # 正常情况：使用数据库中的盈亏数据
+                        final_pnl_points = pnl_points
+                        final_pnl_percent = pnl_percent
+                        exited_pnl_points = None
+                        remaining_pnl_points = None
                     
                     trades.append(TradeResponse(
                         id=trade_id,

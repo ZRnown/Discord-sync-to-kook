@@ -487,11 +487,11 @@ class MonitorCog(commands.Cog):
                         price_reached = False
                         
                         if side == 'long':
-                            # 做多：当前价 >= 入场价 - 误差
-                            price_reached = current_price >= (entry_price - price_tolerance)
-                        else:  # short
-                            # 做空：当前价 <= 入场价 + 误差
+                            # 做多：价格需要下跌到入场价，当前价 <= 入场价 + 误差（允许略高于入场价）
                             price_reached = current_price <= (entry_price + price_tolerance)
+                        else:  # short
+                            # 做空：价格需要上涨到入场价，当前价 >= 入场价 - 误差（允许略低于入场价）
+                            price_reached = current_price >= (entry_price - price_tolerance)
                         
                         if price_reached:
                             # 币价已到达，立即计算状态并保存
@@ -677,8 +677,9 @@ class MonitorCog(commands.Cog):
                 )
                 con.commit()
                 
-                # 获取所有活跃的交易单（未结束的）
+                # 获取所有活跃的交易单（未结束的，且不是"待入场"状态）
                 # 排除已结束的交易单（已止盈、已止损、带单主动止盈、带单主动止损）
+                # 排除"待入场"状态的交易（它们由上面的 pending_trades 处理）
                 cur = con.execute(
                             """
                             SELECT t.id, t.trader_id, t.channel_id, t.symbol, t.side, t.entry_price, t.take_profit, t.stop_loss
@@ -690,7 +691,7 @@ class MonitorCog(commands.Cog):
                             )
                             AND t.id NOT IN (
                                 SELECT trade_id FROM trade_status_detail
-                                WHERE status IN ('已止盈', '已止损', '带单主动止盈', '带单主动止损')
+                                WHERE status IN ('已止盈', '已止损', '带单主动止盈', '带单主动止损', '待入场')
                             )
                             ORDER BY t.created_at DESC
                             """
@@ -722,11 +723,11 @@ class MonitorCog(commands.Cog):
                     price_reached = False
                     
                     if side == 'long':
-                        # 做多：当前价 >= 入场价 - 误差
-                        price_reached = current_price >= (entry_price - price_tolerance)
-                    else:  # short
-                        # 做空：当前价 <= 入场价 + 误差
+                        # 做多：价格需要下跌到入场价，当前价 <= 入场价 + 误差（允许略高于入场价）
                         price_reached = current_price <= (entry_price + price_tolerance)
+                    else:  # short
+                        # 做空：价格需要上涨到入场价，当前价 >= 入场价 - 误差（允许略低于入场价）
+                        price_reached = current_price >= (entry_price - price_tolerance)
                     
                     if price_reached:
                         # 币价已到达，开始正常计算状态

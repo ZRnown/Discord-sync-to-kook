@@ -1,29 +1,25 @@
 "use client"
 
-import { useState, useMemo, useEffect } from "react"
+import { useMemo, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useTrades, useTraders } from "@/hooks/use-trades"
 import { useAuth } from "@/hooks/use-auth"
-import { TradeCard } from "@/components/trade-card"
-import { FilterBar } from "@/components/filter-bar"
-import { TraderSelector } from "@/components/trader-selector"
+import { TraderOverviewCard } from "@/components/trader-overview-card"
 import { PriceTicker } from "@/components/price-ticker"
-import { StatsSummary } from "@/components/stats-summary"
-import { HistorySection } from "@/components/history-section"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
-import type { StatusFilter, SideFilter, Trader, TradeStatus } from "@/lib/types"
-import { Activity, ArrowLeft, Settings, LogOut } from "lucide-react"
+import type { Trader } from "@/lib/types"
+import { Activity, Settings, LogOut, RefreshCw } from "lucide-react"
+import { cn } from "@/lib/utils"
 import Link from "next/link"
-
-const ENDED_STATUSES: TradeStatus[] = ["已止盈", "已止损", "带单主动止盈", "带单主动止损"]
 
 export default function TradingDashboard() {
   const router = useRouter()
   const { isAuthenticated, logout } = useAuth()
-  const [selectedTrader, setSelectedTrader] = useState<Trader | null>(null)
-  const { traders, isLoading: tradersLoading } = useTraders()
-  const { trades, isLoading, isError, error, refresh } = useTrades(selectedTrader?.channel_id)
+  const { traders, isLoading: tradersLoading, refresh: refreshTraders } = useTraders()
+  
+  // 获取所有交易数据（不指定channel_id，获取所有）
+  const { trades: allTrades, isLoading: tradesLoading, refresh: refreshTrades } = useTrades()
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -31,50 +27,18 @@ export default function TradingDashboard() {
     }
   }, [isAuthenticated, router])
 
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
-  const [sideFilter, setSideFilter] = useState<SideFilter>("all")
-  const [symbolFilter, setSymbolFilter] = useState<string>("all")
-
-  const symbols = useMemo(() => {
-    return [...new Set(trades.map((t) => t.symbol))]
-  }, [trades])
-
-  const { activeTrades, historyTrades } = useMemo(() => {
-    const active: typeof trades = []
-    const history: typeof trades = []
-
-    trades.forEach((trade) => {
-      if (ENDED_STATUSES.includes(trade.status)) {
-        history.push(trade)
-      } else {
-        active.push(trade)
-      }
+  // 按带单员分组交易
+  const tradesByTrader = useMemo(() => {
+    const grouped: Record<string, typeof allTrades> = {}
+    traders.forEach(trader => {
+      grouped[trader.id] = allTrades.filter(t => t.channel_id === trader.channel_id)
     })
+    return grouped
+  }, [traders, allTrades])
 
-    // 历史单按时间倒序
-    history.sort((a, b) => b.created_at - a.created_at)
-
-    return { activeTrades: active, historyTrades: history }
-  }, [trades])
-
-  const filteredTrades = useMemo(() => {
-    return activeTrades.filter((trade) => {
-      if (statusFilter !== "all" && trade.status !== statusFilter) return false
-      if (sideFilter !== "all" && trade.side !== sideFilter) return false
-      if (symbolFilter !== "all" && trade.symbol !== symbolFilter) return false
-      return true
-    })
-  }, [activeTrades, statusFilter, sideFilter, symbolFilter])
-
-  const handleSelectTrader = (trader: Trader) => {
-    setSelectedTrader(trader)
-    setStatusFilter("all")
-    setSideFilter("all")
-    setSymbolFilter("all")
-  }
-
-  const handleBack = () => {
-    setSelectedTrader(null)
+  const handleRefresh = () => {
+    refreshTraders()
+    refreshTrades()
   }
 
   return (
@@ -84,14 +48,8 @@ export default function TradingDashboard() {
         <div className="max-w-7xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {selectedTrader && (
-                <Button variant="ghost" size="icon" onClick={handleBack} className="mr-2">
-                  <ArrowLeft className="w-5 h-5" />
-                </Button>
-              )}
               <Activity className="w-5 h-5 text-primary" />
               <h1 className="text-lg font-semibold">交易监控面板</h1>
-              {selectedTrader && <span className="text-sm text-muted-foreground">/ {selectedTrader.name}</span>}
             </div>
             <div className="flex items-center gap-4">
               <PriceTicker />
@@ -110,75 +68,39 @@ export default function TradingDashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-        {!selectedTrader ? (
-          <TraderSelector
-            traders={traders}
-            selectedTrader={selectedTrader}
-            onSelect={handleSelectTrader}
-            isLoading={tradersLoading}
-          />
+        {/* 标题和刷新按钮 */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold">交易监控概览</h2>
+            <p className="text-sm text-muted-foreground mt-1">查看所有带单员的交易情况</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={tradersLoading || tradesLoading}>
+            <RefreshCw className={cn("w-4 h-4 mr-2", (tradersLoading || tradesLoading) && "animate-spin")} />
+            刷新
+          </Button>
+        </div>
+
+        {/* 带单员交易概览卡片 */}
+        {tradersLoading || tradesLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <Skeleton key={i} className="h-64 rounded-lg" />
+            ))}
+          </div>
+        ) : traders.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-muted-foreground">暂无带单员数据</p>
+          </div>
         ) : (
-          <>
-            {/* 统计摘要 */}
-            <StatsSummary trades={trades} />
-
-            {/* 筛选栏 - 只筛选活跃单 */}
-            <FilterBar
-              statusFilter={statusFilter}
-              sideFilter={sideFilter}
-              symbolFilter={symbolFilter}
-              symbols={symbols}
-              onStatusChange={setStatusFilter}
-              onSideChange={setSideFilter}
-              onSymbolChange={setSymbolFilter}
-              onRefresh={refresh}
-              isLoading={isLoading}
-            />
-
-            {/* 活跃交易列表 */}
-            {isError ? (
-              <div className="text-center py-12 space-y-2">
-                <p className="text-destructive font-medium">加载失败</p>
-                <p className="text-sm text-muted-foreground">
-                  {error || "无法连接到后端服务器，请检查 API 配置"}
-                </p>
-                <Button variant="outline" onClick={() => refresh()} className="mt-4">
-                  重试
-                </Button>
-              </div>
-            ) : isLoading && trades.length === 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {[...Array(4)].map((_, i) => (
-                  <Skeleton key={i} className="h-48 rounded-lg" />
-                ))}
-              </div>
-            ) : filteredTrades.length === 0 ? (
-              <div className="text-center py-12">
-                <p className="text-muted-foreground">暂无进行中的交易单</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredTrades.map((trade) => (
-                  <TradeCard 
-                    key={trade.id} 
-                    trade={trade} 
-                    onClose={() => {
-                      // 结单后刷新数据
-                      refresh()
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-
-            <HistorySection 
-              trades={historyTrades} 
-              onTradeDelete={(tradeId) => {
-                // 删除后刷新数据
-                refresh()
-              }}
-            />
-          </>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {traders.map((trader) => (
+              <TraderOverviewCard 
+                key={trader.id} 
+                trader={trader} 
+                trades={tradesByTrader[trader.id] || []} 
+              />
+            ))}
+          </div>
         )}
       </main>
     </div>
