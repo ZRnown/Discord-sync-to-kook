@@ -175,7 +175,7 @@ class MembershipCog(commands.Cog):
             # 检查所有有该角色的成员
             for member in role.members:
                 user_id = str(member.id)
-                st = self.mgr.get_status(user_id)
+            st = self.mgr.get_status(user_id)
                 
                 # 检查体验权限是否过期（6小时后自动撤销）
                 trial_expired = st.get('trial_end') and st['trial_end'] <= now
@@ -358,6 +358,9 @@ class MonitorCog(commands.Cog):
         if not self._periodic_compute.is_running():
             self._periodic_compute.start()
         
+        # 扫描数据库中所有交易单的币种，添加到价格跟踪列表
+        self._scan_existing_symbols()
+        
         # 显示配置信息
         traders = self.trader_config.get_all_traders()
         print(f'[Monitor] ✅ MonitorCog 已加载 - 价格轮询间隔: {interval}秒')
@@ -367,6 +370,29 @@ class MonitorCog(commands.Cog):
                 print(f'  - {trader.get("name", trader["id"])} (ID: {trader["id"]}, 频道ID: {trader["channel_id"]})')
         else:
             print(f'[Monitor] ⚠️ 未配置任何带单员，请在 .env 中设置 TRADER_CONFIG')
+    
+    def _scan_existing_symbols(self):
+        """扫描数据库中所有交易单的币种，将新币种（非BTC/ETH）添加到价格跟踪列表"""
+        import sqlite3
+        try:
+            con = sqlite3.connect(self.store.db_path)
+            try:
+                # 查询所有交易单的唯一币种
+                cur = con.execute("SELECT DISTINCT symbol FROM trades WHERE symbol IS NOT NULL")
+                symbols = [row[0] for row in cur.fetchall()]
+                
+                added_count = 0
+                for symbol in symbols:
+                    if symbol:
+                        self.okx_cache.add_symbol(symbol)
+                        added_count += 1
+                
+                if added_count > 0:
+                    print(f'[Monitor] ✅ 已扫描数据库，添加 {added_count} 个币种到价格跟踪列表')
+            finally:
+                con.close()
+        except Exception as e:
+            print(f'[Monitor] ⚠️ 扫描数据库币种失败: {e}')
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -478,6 +504,10 @@ class MonitorCog(commands.Cog):
                 symbol = data.get('symbol')
                 entry_price = data.get('entry_price')
                 side = data.get('side')
+                
+                # 如果是新币种（非BTC/ETH），添加到价格跟踪列表
+                if symbol:
+                    self.okx_cache.add_symbol(symbol)
                 
                 if symbol and entry_price:
                     current_price = self.okx_cache.get_price(symbol)
@@ -947,7 +977,7 @@ def setup_discord_bot(bot, token):
     @bot.event
     async def on_resumed():
         print('[Discord] 🔄 连接已恢复')
-    
+
     @bot.event
     async def on_ready():
         print(f'[Discord] ✅ {bot.user} 已成功登录！')

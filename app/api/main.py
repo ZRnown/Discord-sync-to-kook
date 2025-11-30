@@ -561,12 +561,11 @@ async def get_trade_detail(trade_id: int, user_id: int = Depends(get_current_use
 
 @app.get("/api/prices")
 async def get_prices(user_id: int = Depends(get_current_user)):
-    """获取实时价格"""
-    prices = {}
-    for inst_id in settings.OKX_INST_IDS:
-        price = okx_cache.get_price(inst_id)
-        if price:
-            prices[inst_id] = float(price)
+    """获取实时价格（包括配置的币种和动态添加的新币种）"""
+    # 获取所有已缓存的价格（包括动态添加的币种）
+    all_prices = okx_cache.get_all_prices()
+    # 转换为字典格式，确保所有价格都是float类型
+    prices = {inst_id: float(price) for inst_id, price in all_prices.items() if price is not None}
     return {"success": True, "data": prices}
 
 @app.delete("/api/trades/{trade_id}")
