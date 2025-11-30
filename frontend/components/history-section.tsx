@@ -8,13 +8,20 @@ import { ChevronDown, ChevronUp, History } from "lucide-react"
 
 interface HistorySectionProps {
   trades: Trade[]
+  onTradeDelete?: (tradeId: number) => void
 }
 
-export function HistorySection({ trades }: HistorySectionProps) {
+export function HistorySection({ trades, onTradeDelete }: HistorySectionProps) {
   const [expanded, setExpanded] = useState(false)
 
   if (trades.length === 0) {
     return null
+  }
+
+  const handleDelete = (tradeId: number) => {
+    if (onTradeDelete) {
+      onTradeDelete(tradeId)
+    }
   }
 
   return (
@@ -39,7 +46,7 @@ export function HistorySection({ trades }: HistorySectionProps) {
       {expanded && (
         <div className="mt-4 space-y-2">
           {trades.map((trade) => (
-            <HistoryTradeCard key={trade.id} trade={trade} />
+            <HistoryTradeCard key={trade.id} trade={trade} onDelete={handleDelete} />
           ))}
         </div>
       )}

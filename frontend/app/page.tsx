@@ -164,7 +164,13 @@ export default function TradingDashboard() {
               </div>
             )}
 
-            <HistorySection trades={historyTrades} />
+            <HistorySection 
+              trades={historyTrades} 
+              onTradeDelete={(tradeId) => {
+                // 删除后刷新数据
+                refresh()
+              }}
+            />
           </>
         )}
       </main>

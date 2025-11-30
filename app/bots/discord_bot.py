@@ -329,9 +329,20 @@ class MonitorCog(commands.Cog):
         if not self.ai.available():
             return
         
+        # 检查是否是回复/引用消息，如果是，需要特别关注
+        is_reply = message.reference is not None
+        full_content = message.content
+        
+        # 如果是回复消息，在内容前添加提示
+        if is_reply:
+            full_content = f"[回复消息] {message.content}"
+            print(f'[Monitor] 💬 检测到回复消息，重点关注止盈止损信息')
+        
         # 使用Deepseek解析交易信息
-        data = self.ai.extract_trade(message.content)
+        data = self.ai.extract_trade(full_content)
         if not isinstance(data, dict) or not data:
+            if is_reply:
+                print(f'[Monitor] ⚠️ 回复消息中未提取到交易信息，已跳过')
             return
         
         # 存入数据库：按 trades / updates 分流

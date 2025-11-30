@@ -33,3 +33,41 @@ export async function getTraders(): Promise<TradersResponse> {
   return apiFetch<TradersResponse>(API_ENDPOINTS.traders)
 }
 
+/**
+ * 删除交易单
+ */
+export async function deleteTrade(tradeId: number): Promise<{ success: boolean; message?: string }> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+  const url = `/api/trades/${tradeId}`
+  
+  const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+  }
+  
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`
+  }
+  
+  const response = await fetch(url, {
+    method: "DELETE",
+    headers,
+  })
+  
+  if (response.status === 401) {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("auth_token")
+      window.location.href = "/login"
+    }
+    throw new Error("未授权，请重新登录")
+  }
+  
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}))
+    throw new Error(errorData.error || errorData.message || `HTTP ${response.status}: ${response.statusText}`)
+  }
+  
+  const data = await response.json()
+  return data
+}
+

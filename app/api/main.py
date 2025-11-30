@@ -502,6 +502,37 @@ async def get_prices(user_id: int = Depends(get_current_user)):
             prices[inst_id] = float(price)
     return {"success": True, "data": prices}
 
+@app.delete("/api/trades/{trade_id}")
+async def delete_trade(trade_id: int, user_id: int = Depends(get_current_user)):
+    """删除指定的交易单（包括相关的更新记录和状态记录）"""
+    con = sqlite3.connect(store.db_path)
+    try:
+        # 检查交易单是否存在
+        cur = con.execute("SELECT id FROM trades WHERE id=?", (trade_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="交易单不存在")
+        
+        # 删除相关的更新记录
+        con.execute("DELETE FROM trade_updates WHERE trade_ref_id=?", (trade_id,))
+        
+        # 删除状态记录
+        con.execute("DELETE FROM trade_status_detail WHERE trade_id=?", (trade_id,))
+        
+        # 删除交易单
+        con.execute("DELETE FROM trades WHERE id=?", (trade_id,))
+        
+        con.commit()
+        print(f'[API] ✅ 用户 {user_id} 删除了交易单 {trade_id}')
+        return {"success": True, "message": "交易单已删除"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        con.rollback()
+        print(f'[API] ❌ 删除交易单失败: {e}')
+        raise HTTPException(status_code=500, detail=f"删除交易单失败: {str(e)}")
+    finally:
+        con.close()
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)

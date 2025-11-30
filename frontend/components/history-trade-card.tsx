@@ -2,18 +2,33 @@
 
 import { Card, CardContent } from "@/components/ui/card"
 import { StatusBadge } from "./status-badge"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { formatPrice, formatPnL, formatPercent } from "@/lib/trade-utils"
 import type { Trade } from "@/lib/types"
-import { ChevronDown, ChevronUp } from "lucide-react"
+import { ChevronDown, ChevronUp, Trash2 } from "lucide-react"
 import { useState } from "react"
+import { deleteTrade } from "@/lib/api-client"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 interface HistoryTradeCardProps {
   trade: Trade
+  onDelete?: (tradeId: number) => void
 }
 
-export function HistoryTradeCard({ trade }: HistoryTradeCardProps) {
+export function HistoryTradeCard({ trade, onDelete }: HistoryTradeCardProps) {
   const [expanded, setExpanded] = useState(false)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
   const isLong = trade.side === "long"
   const isProfitable = trade.pnl_points >= 0
   
@@ -24,6 +39,22 @@ export function HistoryTradeCard({ trade }: HistoryTradeCardProps) {
   // 如果交易已结束，使用固定的pnl_points和pnl_percent，不再使用current_price计算
   const finalPnlPoints = isEnded ? (trade.pnl_points ?? 0) : trade.pnl_points ?? 0
   const finalPnlPercent = isEnded ? (trade.pnl_percent ?? 0) : trade.pnl_percent ?? 0
+
+  const handleDelete = async () => {
+    setIsDeleting(true)
+    try {
+      await deleteTrade(trade.id)
+      setShowDeleteDialog(false)
+      if (onDelete) {
+        onDelete(trade.id)
+      }
+    } catch (error) {
+      console.error("删除交易单失败:", error)
+      alert(error instanceof Error ? error.message : "删除失败")
+    } finally {
+      setIsDeleting(false)
+    }
+  }
 
   return (
     <Card className="bg-card/50 border-border/50">
@@ -58,6 +89,21 @@ export function HistoryTradeCard({ trade }: HistoryTradeCardProps) {
         {/* 展开的详情 */}
         {expanded && (
           <div className="mt-3 pt-3 border-t border-border/50 space-y-3">
+            {/* 删除按钮 */}
+            <div className="flex justify-end">
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowDeleteDialog(true)
+                }}
+                className="gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                删除
+              </Button>
+            </div>
             {/* 价格信息 */}
             <div className="grid grid-cols-4 gap-3 text-sm">
               <div>
@@ -104,6 +150,30 @@ export function HistoryTradeCard({ trade }: HistoryTradeCardProps) {
             )}
           </div>
         )}
+
+        {/* 删除确认对话框 */}
+        <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>确认删除</AlertDialogTitle>
+              <AlertDialogDescription>
+                确定要删除这笔交易记录吗？此操作无法撤销。
+                <br />
+                <span className="font-medium">{trade.symbol} - {trade.side === "long" ? "多" : "空"}</span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>取消</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {isDeleting ? "删除中..." : "删除"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </CardContent>
     </Card>
   )
