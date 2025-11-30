@@ -3,7 +3,7 @@ import { calculatePricePosition, calculateEntryPosition, formatPrice } from "@/l
 import type { TradeSide } from "@/lib/types"
 
 interface PriceProgressBarProps {
-  currentPrice: number
+  currentPrice: number | null | undefined
   entryPrice: number
   takeProfit: number
   stopLoss: number
@@ -19,11 +19,13 @@ export function PriceProgressBar({
   side,
   symbol,
 }: PriceProgressBarProps) {
-  const currentPosition = calculatePricePosition(currentPrice, stopLoss, entryPrice, takeProfit, side)
+  // 如果当前价格为 null 或 undefined，使用入场价作为默认值
+  const effectivePrice = currentPrice ?? entryPrice
+  const currentPosition = calculatePricePosition(effectivePrice, stopLoss, entryPrice, takeProfit, side)
   const entryPosition = calculateEntryPosition(stopLoss, entryPrice, takeProfit, side)
 
   // 判断当前价格相对于入场价的位置
-  const isInProfit = side === "long" ? currentPrice > entryPrice : currentPrice < entryPrice
+  const isInProfit = side === "long" ? effectivePrice > entryPrice : effectivePrice < entryPrice
 
   // 左侧和右侧标签
   const leftLabel = side === "long" ? "止损" : "止盈"

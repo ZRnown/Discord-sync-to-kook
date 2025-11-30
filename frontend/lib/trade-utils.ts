@@ -72,7 +72,12 @@ export function calculateEntryPosition(
   }
 }
 
-export function formatPrice(price: number, symbol: string): string {
+export function formatPrice(price: number | null | undefined, symbol: string): string {
+  // 处理 null 或 undefined
+  if (price === null || price === undefined || isNaN(price)) {
+    return "—"
+  }
+  
   // 根据币种调整小数位数
   if (symbol.includes("BTC")) {
     return price.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })

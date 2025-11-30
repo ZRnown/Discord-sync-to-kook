@@ -28,7 +28,10 @@ export function PriceTicker() {
     prevPricesRef.current = prices
   }, [prices])
 
-  const formatPrice = (price: number, symbol: string) => {
+  const formatPrice = (price: number | null | undefined, symbol: string) => {
+    if (price === null || price === undefined || isNaN(price)) {
+      return "—"
+    }
     if (symbol.includes("BTC")) {
       return price.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })
     }

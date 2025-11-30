@@ -25,7 +25,10 @@ export default function TraderDetailPage() {
   const { traders, isLoading: tradersLoading } = useTraders()
   const trader = traders.find(t => t.id === traderId)
   
-  const { trades, isLoading, isError, error, refresh } = useTrades(trader?.channel_id)
+  // 只有在找到 trader 时才获取交易数据
+  const { trades, isLoading, isError, error, refresh } = useTrades(
+    trader ? trader.channel_id : undefined
+  )
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -67,7 +70,19 @@ export default function TraderDetailPage() {
     })
   }, [activeTrades, statusFilter, sideFilter, symbolFilter])
 
-  if (!trader && !tradersLoading) {
+  // 如果正在加载交易员列表，显示加载状态
+  if (tradersLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <p className="text-muted-foreground">加载中...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // 如果找不到交易员，显示错误
+  if (!trader) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center space-y-4">
