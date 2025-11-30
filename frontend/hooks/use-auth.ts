@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { getAuthToken, setAuthToken, removeAuthToken, isAuthenticated } from "@/lib/auth"
-import { API_BASE_URL } from "@/lib/api-config"
 
 interface LoginCredentials {
   username: string
@@ -24,7 +23,7 @@ export function useAuth() {
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+      const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -55,7 +54,7 @@ export function useAuth() {
     const token = getAuthToken()
     if (token) {
       try {
-        await fetch(`${API_BASE_URL}/api/auth/logout`, {
+        await fetch("/api/auth/logout", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
@@ -79,7 +78,7 @@ export function useAuth() {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/change-password`, {
+      const response = await fetch("/api/auth/change-password", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

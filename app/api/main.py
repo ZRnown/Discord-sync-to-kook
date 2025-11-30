@@ -22,9 +22,15 @@ from app.services.membership.store import MembershipStore
 app = FastAPI(title="交易监控API", version="1.0.0")
 
 # CORS配置
+# 从环境变量读取允许的源，如果没有则使用默认值
+import os
+cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001").split(",")
+# 清理空格
+cors_origins = [origin.strip() for origin in cors_origins if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

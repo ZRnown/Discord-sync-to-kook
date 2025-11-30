@@ -15,9 +15,13 @@ class TrialView(discord.ui.View):
     @discord.ui.button(label="申请体验", style=discord.ButtonStyle.primary, emoji="🎮", custom_id="trial_apply")
     async def apply_trial(self, interaction: discord.Interaction, button: discord.ui.Button):
         user_id = str(interaction.user.id)
+        user_name = interaction.user.name
+        print(f'[Membership] 🔍 用户 {user_name}({user_id}) 点击申请体验按钮')
+        
         ok, msg = self.mgr.can_start_trial(user_id)
         
         if not ok:
+            print(f'[Membership] ❌ 用户 {user_name}({user_id}) 申请体验失败: {msg}')
             await interaction.response.send_message(
                 f"❌ {msg}\n\n" +
                 ("• 每个会员只能获得一次体验机会\n" if "已使用" in msg else "") +
@@ -27,25 +31,63 @@ class TrialView(discord.ui.View):
             return
         
         # 开始试用
+        print(f'[Membership] 📝 开始为用户 {user_name}({user_id}) 创建体验记录')
         self.mgr.start_trial(user_id)
         
         # 分配会员角色（如果有配置）
-        if isinstance(interaction.user, discord.Member) and self.settings.MEMBER_ROLE_ID:
+        role_assigned = False
+        if not isinstance(interaction.user, discord.Member):
+            print(f'[Membership] ⚠️ 用户 {user_name}({user_id}) 不是 Member 对象，无法分配角色')
+        elif not self.settings.MEMBER_ROLE_ID:
+            print(f'[Membership] ⚠️ MEMBER_ROLE_ID 未配置，跳过角色分配')
+        else:
             try:
-                role = interaction.guild.get_role(int(self.settings.MEMBER_ROLE_ID))
-                if role:
-                    await interaction.user.add_roles(role, reason="体验权限申请")
+                role_id = int(self.settings.MEMBER_ROLE_ID)
+                role = interaction.guild.get_role(role_id)
+                if not role:
+                    print(f'[Membership] ❌ 角色 ID {role_id} 不存在于服务器中')
+                else:
+                    # 检查用户是否已有该角色
+                    if role in interaction.user.roles:
+                        print(f'[Membership] ℹ️ 用户 {user_name}({user_id}) 已有角色 {role.name}')
+                        role_assigned = True
+                    else:
+                        # 检查机器人权限
+                        bot_member = interaction.guild.me
+                        if not bot_member.guild_permissions.manage_roles:
+                            print(f'[Membership] ❌ 机器人没有管理角色权限 (manage_roles)')
+                        elif role.position >= bot_member.top_role.position:
+                            print(f'[Membership] ❌ 角色 {role.name} 的位置高于或等于机器人的最高角色，无法分配')
+                        else:
+                            await interaction.user.add_roles(role, reason="体验权限申请")
+                            role_assigned = True
+                            print(f'[Membership] ✅ 成功为用户 {user_name}({user_id}) 分配角色 {role.name}({role_id})')
+                            # 验证角色是否真的被添加
+                            await interaction.user.fetch()  # 刷新用户信息
+                            if role in interaction.user.roles:
+                                print(f'[Membership] ✅ 验证：用户 {user_name} 现在拥有角色 {role.name}')
+                            else:
+                                print(f'[Membership] ⚠️ 警告：角色分配后验证失败，用户可能没有该角色')
+            except ValueError as e:
+                print(f'[Membership] ❌ MEMBER_ROLE_ID 格式错误: {e}')
+            except discord.Forbidden as e:
+                print(f'[Membership] ❌ 分配角色权限不足: {e}')
             except Exception as e:
-                print(f"[Membership] ⚠️ 分配角色失败: {e}")
+                print(f'[Membership] ❌ 分配角色失败: {e}')
+                import traceback
+                traceback.print_exc()
         
         trial_hours = self.settings.TRIAL_DURATION_HOURS
+        role_status = "✅ 角色已分配" if role_assigned else "⚠️ 角色未分配（请检查配置）"
+        
         await interaction.response.send_message(
             f"✅ 体验权限申请成功！\n\n"
             f"🎉 您已获得 {trial_hours} 小时的体验权限\n"
-            f"⏰ 体验时间结束后，权限将自动移除",
+            f"⏰ 体验时间结束后，权限将自动移除\n\n"
+            f"{role_status}",
             ephemeral=True
         )
-        print(f'[Membership] ✅ 用户 {interaction.user.name}({user_id}) 申请体验权限成功')
+        print(f'[Membership] ✅ 用户 {user_name}({user_id}) 申请体验权限完成，角色分配: {"成功" if role_assigned else "失败"}')
 
     @discord.ui.button(label="查询时长", style=discord.ButtonStyle.secondary, emoji="⏱️", custom_id="trial_status")
     async def check_status(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -89,11 +131,15 @@ class MembershipCog(commands.Cog):
 
     async def cog_load(self):
         # 注册持久化视图（按钮）- 必须在cog_load中注册
-        self.bot.add_view(TrialView(self.mgr, self.settings))
+        self.bot.add_view(TrialView(self.mgr, self.settings, self.bot))
         # 启动定期检查任务
         if not self._check_expired.is_running():
             self._check_expired.start()
         print('[Membership] ✅ MembershipCog 已加载')
+        if not self.settings.MEMBER_ROLE_ID:
+            print('[Membership] ⚠️ 警告: MEMBER_ROLE_ID 未配置，申请体验时不会分配角色')
+        else:
+            print(f'[Membership] ℹ️ 配置的会员角色 ID: {self.settings.MEMBER_ROLE_ID}')
 
     async def cog_unload(self):
         # 停止定期检查任务
@@ -197,7 +243,7 @@ class MembershipCog(commands.Cog):
         )
         
         # 创建视图（包含按钮）
-        view = TrialView(self.mgr, self.settings)
+        view = TrialView(self.mgr, self.settings, self.bot)
         
         try:
             await target_channel.send(embed=embed, view=view)

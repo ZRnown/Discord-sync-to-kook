@@ -173,8 +173,8 @@ export function TradeCard({ trade, onClose }: TradeCardProps) {
         {/* 底部：时间和操作按钮 */}
         <div className="flex items-center justify-between text-xs text-muted-foreground pt-2 border-t border-border">
           <div className="flex items-center">
-            <Clock className="w-3 h-3 mr-1" />
-            <span>{trade.created_at_str}</span>
+          <Clock className="w-3 h-3 mr-1" />
+          <span>{trade.created_at_str}</span>
           </div>
           {!isEnded && (
             <Button
