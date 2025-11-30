@@ -242,16 +242,59 @@ class MembershipCog(commands.Cog):
             color=discord.Color.blue()
         )
         
+        # 先响应交互，避免超时
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except discord.InteractionResponded:
+            # 如果已经响应过，使用 followup
+            pass
+        
         # 创建视图（包含按钮）
         view = TrialView(self.mgr, self.settings, self.bot)
         
         try:
+            # 发送消息到目标频道
             await target_channel.send(embed=embed, view=view)
-            await interaction.response.send_message(f"✅ 体验权限申请消息已发送到 {target_channel.mention}", ephemeral=True)
+            
+            # 使用 followup 发送确认消息
+            try:
+                await interaction.followup.send(
+                    f"✅ 体验权限申请消息已发送到 {target_channel.mention}",
+                    ephemeral=True
+                )
+            except discord.InteractionResponded:
+                # 如果已经响应，尝试编辑响应
+                await interaction.edit_original_response(
+                    content=f"✅ 体验权限申请消息已发送到 {target_channel.mention}"
+                )
+            
             print(f'[Membership] ✅ 管理员 {interaction.user.name} 在频道 {target_channel.name} 发送了体验权限申请消息')
+        except discord.Forbidden as e:
+            error_msg = f"❌ 发送失败: 机器人没有在频道 {target_channel.mention} 发送消息的权限"
+            try:
+                await interaction.followup.send(error_msg, ephemeral=True)
+            except:
+                await interaction.edit_original_response(content=error_msg)
+            print(f'[Membership] ❌ 发送体验权限申请消息失败（权限不足）: {e}')
+        except discord.NotFound as e:
+            error_msg = f"❌ 发送失败: 频道 {target_channel.mention} 不存在或无法访问"
+            try:
+                await interaction.followup.send(error_msg, ephemeral=True)
+            except:
+                await interaction.edit_original_response(content=error_msg)
+            print(f'[Membership] ❌ 发送体验权限申请消息失败（频道不存在）: {e}')
         except Exception as e:
-            await interaction.response.send_message(f"❌ 发送失败: {e}", ephemeral=True)
+            error_msg = f"❌ 发送失败: {str(e)}"
+            try:
+                await interaction.followup.send(error_msg, ephemeral=True)
+            except:
+                try:
+                    await interaction.edit_original_response(content=error_msg)
+                except:
+                    pass
             print(f'[Membership] ❌ 发送体验权限申请消息失败: {e}')
+            import traceback
+            traceback.print_exc()
 
     @app_commands.command(name="member", description="管理员管理会员资格")
     async def member(self, interaction: discord.Interaction, action: str, user: discord.User, days: int = 0):
