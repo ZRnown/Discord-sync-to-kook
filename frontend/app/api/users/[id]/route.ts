@@ -4,7 +4,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const token = request.headers.get("authorization")
@@ -13,7 +13,7 @@ export async function PUT(
     }
 
     const body = await request.json()
-    const userId = params.id
+    const { id: userId } = await params
 
     const response = await fetch(`${API_BASE_URL}/api/users/${userId}`, {
       method: "PUT",
@@ -37,7 +37,7 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const token = request.headers.get("authorization")
@@ -45,7 +45,7 @@ export async function DELETE(
       return NextResponse.json({ error: "未授权" }, { status: 401 })
     }
 
-    const userId = params.id
+    const { id: userId } = await params
 
     const response = await fetch(`${API_BASE_URL}/api/users/${userId}`, {
       method: "DELETE",

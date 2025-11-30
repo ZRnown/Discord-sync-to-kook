@@ -4,7 +4,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const token = request.headers.get("authorization")
@@ -12,7 +12,7 @@ export async function GET(
       return NextResponse.json({ error: "未授权" }, { status: 401 })
     }
 
-    const userId = params.id
+    const { id: userId } = await params
 
     const response = await fetch(`${API_BASE_URL}/api/users/${userId}/password-info`, {
       headers: {
