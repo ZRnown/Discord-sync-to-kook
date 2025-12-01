@@ -4,6 +4,9 @@ from discord.ext import tasks
 from discord import app_commands
 from app.config.settings import get_settings
 import time
+import logging
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 
 # 体验权限申请按钮视图
 class TrialView(discord.ui.View):
@@ -335,6 +338,8 @@ class OKXCog(commands.Cog):
         await interaction.response.send_message(f"已取消订阅 {inst_id}")
 
 class MonitorCog(commands.Cog):
+    _logger_initialized = False
+    
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         from app.config.settings import get_settings
@@ -350,6 +355,41 @@ class MonitorCog(commands.Cog):
         from app.services.okx.state_cache import OKXStateCache
         self.okx_cache = OKXStateCache()
         self.okx_cache.start()
+        
+        self.logger = logging.getLogger('monitor')
+        if not MonitorCog._logger_initialized:
+            self._setup_logger()
+            MonitorCog._logger_initialized = True
+
+    def _setup_logger(self):
+        log_dir = Path(self.settings.MONITOR_LOG_DIR)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / 'monitor.log'
+        handler_exists = any(
+            isinstance(handler, TimedRotatingFileHandler) and getattr(handler, 'baseFilename', None) == str(log_file)
+            for handler in self.logger.handlers
+        )
+        if not handler_exists:
+            handler = TimedRotatingFileHandler(
+                log_file,
+                when='midnight',
+                backupCount=2,
+                encoding='utf-8'
+            )
+            formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+            handler.setFormatter(formatter)
+            self.logger.setLevel(logging.INFO)
+            self.logger.addHandler(handler)
+            self.logger.propagate = False
+
+    def _log_event(self, message: str, level=logging.INFO):
+        print(message)
+        if level == logging.ERROR:
+            self.logger.error(message)
+        elif level == logging.WARNING:
+            self.logger.warning(message)
+        else:
+            self.logger.info(message)
 
     async def cog_load(self):
         # 在cog加载时启动周期任务，并设置间隔
@@ -360,13 +400,13 @@ class MonitorCog(commands.Cog):
         
         # 显示配置信息
         traders = self.trader_config.get_all_traders()
-        print(f'[Monitor] ✅ MonitorCog 已加载 - 价格轮询间隔: {interval}秒')
+        self._log_event(f'[Monitor] ✅ MonitorCog 已加载 - 价格轮询间隔: {interval}秒')
         if traders:
-            print(f'[Monitor] 📋 已配置 {len(traders)} 个带单员:')
+            self._log_event(f'[Monitor] 📋 已配置 {len(traders)} 个带单员:')
             for trader in traders:
-                print(f'  - {trader.get("name", trader["id"])} (ID: {trader["id"]}, 频道ID: {trader["channel_id"]})')
+                self._log_event(f'  - {trader.get("name", trader["id"])} (ID: {trader["id"]}, 频道ID: {trader["channel_id"]})')
         else:
-            print(f'[Monitor] ⚠️ 未配置任何带单员，请在 .env 中设置 TRADER_CONFIG')
+            self._log_event(f'[Monitor] ⚠️ 未配置任何带单员，请在 .env 中设置 TRADER_CONFIG')
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -388,10 +428,10 @@ class MonitorCog(commands.Cog):
                 all_traders = self.trader_config.get_all_traders()
                 if all_traders:
                     channel_ids = [t['channel_id'] for t in all_traders]
-                    print(f'[Monitor] 🔍 调试: 当前消息频道ID {channel_id} 不在监控列表中')
-                    print(f'[Monitor] 🔍 调试: 已配置的频道ID: {channel_ids}')
+                    self._log_event(f'[Monitor] 🔍 调试: 当前消息频道ID {channel_id} 不在监控列表中')
+                    self._log_event(f'[Monitor] 🔍 调试: 已配置的频道ID: {channel_ids}')
                 else:
-                    print(f'[Monitor] ⚠️ 调试: 未配置任何带单员，无法监控任何频道')
+                    self._log_event(f'[Monitor] ⚠️ 调试: 未配置任何带单员，无法监控任何频道')
                 self._debug_logged = True
             return  # 该频道没有配置带单员，跳过
         
@@ -400,7 +440,7 @@ class MonitorCog(commands.Cog):
         
         # 检测到频道消息日志（包括 webhook 消息）
         msg_type = "Webhook" if is_webhook else "用户"
-        print(f'[Monitor] 📨 检测到频道消息 ({msg_type}) - 带单员: {trader_name}({trader_id}), 频道ID: {channel_id}, 发送者: {author_name}')
+        self._log_event(f'[Monitor] 📨 检测到频道消息 ({msg_type}) - 带单员: {trader_name}({trader_id}), 频道ID: {channel_id}, 发送者: {author_name}')
         
         if not message.content or not self.settings.MONITOR_PARSE_ENABLED:
             return
@@ -414,7 +454,7 @@ class MonitorCog(commands.Cog):
         # 如果是回复消息，在内容前添加提示
         if is_reply:
             full_content = f"[回复消息] {message.content}"
-            print(f'[Monitor] 💬 检测到回复消息，重点关注止盈止损信息')
+            self._log_event(f'[Monitor] 💬 检测到回复消息，重点关注止盈止损信息')
         
         # 使用Deepseek解析交易信息
         data = self.ai.extract_trade(full_content)
@@ -422,10 +462,10 @@ class MonitorCog(commands.Cog):
             # 检查消息是否包含出局/止盈/止损关键词，如果包含但未提取到，记录日志
             exit_keywords = ['出局', '止盈', '止损', '获利', '亏损', '剩余', '继续持有', '设置止损', '成本价']
             if any(keyword in message.content for keyword in exit_keywords):
-                print(f'[Monitor] ⚠️ 消息包含出局/止盈/止损关键词，但Deepseek未提取到信息')
-                print(f'[Monitor] ⚠️ 原始消息: {message.content[:200]}')
+                self._log_event(f'[Monitor] ⚠️ 消息包含出局/止盈/止损关键词，但Deepseek未提取到信息', level=logging.WARNING)
+                self._log_event(f'[Monitor] ⚠️ 原始消息: {message.content[:200]}', level=logging.WARNING)
             if is_reply:
-                print(f'[Monitor] ⚠️ 回复消息中未提取到交易信息，已跳过')
+                self._log_event(f'[Monitor] ⚠️ 回复消息中未提取到交易信息，已跳过', level=logging.WARNING)
             return
         
         # 存入数据库：按 trades / updates 分流
@@ -440,11 +480,11 @@ class MonitorCog(commands.Cog):
                 entry_price = data.get('entry_price', 'N/A')
                 take_profit = data.get('take_profit', 'N/A')
                 stop_loss = data.get('stop_loss', 'N/A')
-                print(f'[Monitor] ✅ 提取到入场信号 - 带单员: {trader_name}')
-                print(f'  📊 交易对: {symbol} | 方向: {side.upper()}')
-                print(f'  📍 进场点位: {entry_price}')
-                print(f'  🎯 止盈点位: {take_profit}')
-                print(f'  🛑 止损点位: {stop_loss}')
+                self._log_event(f'[Monitor] ✅ 提取到入场信号 - 带单员: {trader_name}')
+                self._log_event(f'  📊 交易对: {symbol} | 方向: {side.upper()}')
+                self._log_event(f'  📍 进场点位: {entry_price}')
+                self._log_event(f'  🎯 止盈点位: {take_profit}')
+                self._log_event(f'  🛑 止损点位: {stop_loss}')
                 # 创建表（如果不存在），添加trader_id字段
                 con.execute(
                     """
@@ -508,29 +548,29 @@ class MonitorCog(commands.Cog):
                                 symbol, side, entry_price, take_profit, stop_loss, current_price
                             )
                             self._upsert_trade_status(con, trade_id, status, pnl_points, pnl_percent, current_price)
-                            print(f'[Monitor] ✅ 币价已到达入场价 - 当前价: {current_price}, 入场价: {entry_price}, 状态: {status}')
+                            self._log_event(f'[Monitor] ✅ 币价已到达入场价 - 当前价: {current_price}, 入场价: {entry_price}, 状态: {status}')
                         else:
                             # 币价未到达，标记为"待入场"
                             self._upsert_trade_status(con, trade_id, "待入场", None, None, current_price)
-                            print(f'[Monitor] ⏳ 币价未到达入场价 - 当前价: {current_price}, 入场价: {entry_price}, 等待中...')
+                            self._log_event(f'[Monitor] ⏳ 币价未到达入场价 - 当前价: {current_price}, 入场价: {entry_price}, 等待中...')
                     else:
                         # 无法获取价格，标记为"待入场"
                         self._upsert_trade_status(con, trade_id, "待入场", None, None, None)
-                        print(f'[Monitor] ⏳ 无法获取当前价格，标记为待入场')
+                        self._log_event(f'[Monitor] ⏳ 无法获取当前价格，标记为待入场')
                 else:
                     # 缺少必要信息，标记为"待入场"
                     self._upsert_trade_status(con, trade_id, "待入场", None, None, None)
-                    print(f'[Monitor] ⏳ 缺少交易对或入场价信息，标记为待入场')
+                    self._log_event(f'[Monitor] ⏳ 缺少交易对或入场价信息，标记为待入场')
                 
                 con.commit()
             elif data.get('type') == 'update':
                 # 提取到更新信号日志
                 status = data.get('status', 'N/A')
                 pnl_points = data.get('pnl_points', 'N/A')
-                print(f'[Monitor] ✅ 提取到更新信号 - 带单员: {trader_name}')
-                print(f'  📈 状态: {status}')
+                self._log_event(f'[Monitor] ✅ 提取到更新信号 - 带单员: {trader_name}')
+                self._log_event(f'  📈 状态: {status}')
                 if pnl_points and pnl_points != 'N/A':
-                    print(f'  💰 盈亏点数: {pnl_points}')
+                    self._log_event(f'  💰 盈亏点数: {pnl_points}')
                 
                 # 确保表存在
                 con.execute(
@@ -610,7 +650,7 @@ class MonitorCog(commands.Cog):
                             
                             # 更新状态为部分出局，但交易单仍然活跃
                             self._upsert_trade_status(con, trade_id, update_status, remaining_pnl, remaining_pnl_percent, current_price)
-                            print(f'[Monitor] 💰 部分出局 - 剩余部分盈亏: {remaining_pnl:.2f}点 ({remaining_pnl_percent:.2f}%)')
+                            self._log_event(f'[Monitor] 💰 部分出局 - 剩余部分盈亏: {remaining_pnl:.2f}点 ({remaining_pnl_percent:.2f}%)')
                     elif is_final_status:
                         # 最终状态：已止盈/已止损，交易单结束
                         # 使用更新消息中的盈亏点数，如果没有则计算
@@ -628,7 +668,7 @@ class MonitorCog(commands.Cog):
                         
                         final_pnl_percent = (final_pnl / entry_price) * 100 if entry_price > 0 else 0
                         self._upsert_trade_status(con, trade_id, update_status, final_pnl, final_pnl_percent, None)
-                        print(f'[Monitor] ✅ 交易单已结束 - 状态: {update_status}, 盈亏: {final_pnl:.2f}点 ({final_pnl_percent:.2f}%)')
+                        self._log_event(f'[Monitor] ✅ 交易单已结束 - 状态: {update_status}, 盈亏: {final_pnl:.2f}点 ({final_pnl_percent:.2f}%)')
                     else:
                         # 其他更新状态（如浮盈、浮亏等），继续计算实时状态
                         current_price = self.okx_cache.get_price(symbol)
@@ -744,7 +784,7 @@ class MonitorCog(commands.Cog):
                             symbol, side, entry_price, take_profit, stop_loss, current_price
                         )
                         self._upsert_trade_status(con, trade_id, status, pnl_points, pnl_percent, current_price)
-                        print(f'[Monitor] ✅ 待入场交易 #{trade_id} 币价已到达 - 当前价: {current_price}, 入场价: {entry_price}, 状态: {status}')
+                        self._log_event(f'[Monitor] ✅ 待入场交易 #{trade_id} 币价已到达 - 当前价: {current_price}, 入场价: {entry_price}, 状态: {status}')
                     else:
                         # 更新当前价格，但保持"待入场"状态
                         self._upsert_trade_status(con, trade_id, "待入场", None, None, current_price)

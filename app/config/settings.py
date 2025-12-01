@@ -49,6 +49,8 @@ class Settings:
         self.DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
         self.DEEPSEEK_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek-v3.2')
         self.DEEPSEEK_ENDPOINT = os.getenv('DEEPSEEK_ENDPOINT', 'https://api.v3.cm/v1/chat/completions')
+        default_log_dir = os.path.join(os.getcwd(), 'logs', 'monitor')
+        self.MONITOR_LOG_DIR = os.getenv('MONITOR_LOG_DIR', default_log_dir)
 
         # Trader configuration: trader_id|channel_id|trader_name;trader2|channel2|name2
         # 格式：带单员ID|Discord频道ID|带单员名称
