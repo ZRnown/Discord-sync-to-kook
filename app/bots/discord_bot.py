@@ -370,9 +370,13 @@ class MonitorCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        # 只忽略自己的消息，允许监听其他机器人的消息
+        # 只忽略自己的消息，允许监听其他机器人的消息和 webhook 消息
         if message.author == self.bot.user:
             return
+        
+        # 检查是否是 webhook 消息
+        is_webhook = message.webhook_id is not None
+        author_name = getattr(message.author, 'name', None) or getattr(message.author, 'display_name', None) or f"Webhook-{message.webhook_id}" if is_webhook else "Unknown"
         
         channel_id = str(message.channel.id)
         
@@ -394,8 +398,9 @@ class MonitorCog(commands.Cog):
         trader_id = trader['id']
         trader_name = trader.get('name', trader_id)
         
-        # 检测到频道消息日志
-        print(f'[Monitor] 📨 检测到频道消息 - 带单员: {trader_name}({trader_id}), 频道ID: {channel_id}, 用户: {message.author.name}')
+        # 检测到频道消息日志（包括 webhook 消息）
+        msg_type = "Webhook" if is_webhook else "用户"
+        print(f'[Monitor] 📨 检测到频道消息 ({msg_type}) - 带单员: {trader_name}({trader_id}), 频道ID: {channel_id}, 发送者: {author_name}')
         
         if not message.content or not self.settings.MONITOR_PARSE_ENABLED:
             return
@@ -465,12 +470,15 @@ class MonitorCog(commands.Cog):
                 except sqlite3.OperationalError:
                     pass  # 字段已存在
                 
+                # 处理 webhook 消息的 user_id（webhook 消息可能没有 author.id）
+                user_id = str(getattr(message.author, 'id', message.webhook_id)) if message.webhook_id else str(message.author.id)
+                
                 con.execute(
                     """
                     INSERT INTO trades(trader_id, source_message_id, channel_id, user_id, symbol, side, entry_price, take_profit, stop_loss, confidence, created_at)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?)
                     """,
-                    (trader_id, str(message.id), channel_id, str(message.author.id), data.get('symbol'), data.get('side'), data.get('entry_price'), data.get('take_profit'), data.get('stop_loss'), data.get('confidence'), now)
+                    (trader_id, str(message.id), channel_id, user_id, data.get('symbol'), data.get('side'), data.get('entry_price'), data.get('take_profit'), data.get('stop_loss'), data.get('confidence'), now)
                 )
                 trade_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
                 
@@ -564,12 +572,15 @@ class MonitorCog(commands.Cog):
                 trade_ref_id = latest_trade[0] if latest_trade else None
                 
                 # 保存更新记录
+                # 处理 webhook 消息的 user_id（webhook 消息可能没有 author.id）
+                user_id = str(getattr(message.author, 'id', message.webhook_id)) if message.webhook_id else str(message.author.id)
+                
                 con.execute(
                     """
                     INSERT INTO trade_updates(trader_id, trade_ref_id, source_message_id, channel_id, user_id, text, pnl_points, status, created_at)
                     VALUES(?,?,?,?,?,?,?,?,?)
                     """,
-                    (trader_id, trade_ref_id, str(message.id), channel_id, str(message.author.id), message.content, data.get('pnl_points'), data.get('status'), now)
+                    (trader_id, trade_ref_id, str(message.id), channel_id, user_id, message.content, data.get('pnl_points'), data.get('status'), now)
                 )
                 
                 # 如果找到了对应的交易单，更新其状态
