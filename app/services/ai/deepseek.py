@@ -34,10 +34,17 @@ class DeepseekClient:
             "  \"type\": \"entry\",\n"
             "  \"symbol\": \"交易对名称（如BTC-USDT-SWAP，如果文本中提到比特币/BTC则使用BTC-USDT-SWAP，提到以太坊/ETH则使用ETH-USDT-SWAP）\",\n"
             "  \"side\": \"long\" 或 \"short\"（做多或做空，空单/做空/卖出=short，多单/做多/买入=long）,\n"
-            "  \"entry_price\": 进场价格（数字，从文本中提取，如\"现价87400附近\"则提取87400）,\n"
-            "  \"take_profit\": 止盈价格（数字，从文本中提取）,\n"
-            "  \"stop_loss\": 止损价格（数字，从文本中提取）\n"
+            "  \"entry_price\": 进场价格（数字，从文本中提取，如\"现价87400附近\"则提取87400，\"现价2806附近\"则提取2806，\"2806附近\"则提取2806）,\n"
+            "  \"take_profit\": 止盈价格（数字，从文本中提取，如\"止盈:2650\"则提取2650，\"止盈2650\"则提取2650）,\n"
+            "  \"stop_loss\": 止损价格（数字，从文本中提取，如\"止损:2870\"则提取2870，\"止损2870\"则提取2870）\n"
             "}\n\n"
+            "📝 解析示例：\n"
+            "示例1: \"以太坊现价2806附近做空\\n\\n止盈:2650\\n\\n止损:2870\\n\\n轻仓介入！！！\"\n"
+            "应解析为: {\"type\":\"entry\",\"symbol\":\"ETH-USDT-SWAP\",\"side\":\"short\",\"entry_price\":2806,\"take_profit\":2650,\"stop_loss\":2870}\n\n"
+            "示例2: \"BTC现价87400附近做多 止盈90000 止损86000\"\n"
+            "应解析为: {\"type\":\"entry\",\"symbol\":\"BTC-USDT-SWAP\",\"side\":\"long\",\"entry_price\":87400,\"take_profit\":90000,\"stop_loss\":86000}\n\n"
+            "示例3: \"eth 1800 多单 止盈：4900，止损1600\"\n"
+            "应解析为: {\"type\":\"entry\",\"symbol\":\"ETH-USDT-SWAP\",\"side\":\"long\",\"entry_price\":1800,\"take_profit\":4900,\"stop_loss\":1600}\n\n"
             "如果是出场/止盈/止损/全部出局/部分出局更新（包含以下任一关键词：出局、止盈、止损、获利、亏损、部分出局、出局XX%、剩余、继续持有、设置止损、成本价等），输出JSON格式: {\n"
             "  \"type\": \"update\",\n"
             "  \"status\": \"已止盈\"|\"已止损\"|\"带单主动止盈\"|\"带单主动止损\"|\"部分止盈\"|\"部分止损\"|\"部分出局\"|\"浮盈\"|\"浮亏\",\n"
@@ -163,21 +170,44 @@ class DeepseekClient:
                     entry = result.get('entry_price', 'N/A')
                     tp = result.get('take_profit', 'N/A')
                     sl = result.get('stop_loss', 'N/A')
-                    print(f'[Deepseek] ✅ 提取到入场信号')
-                    print(f'  📊 交易对: {symbol} | 方向: {side.upper()}')
-                    print(f'  📍 进场点位: {entry}')
-                    print(f'  🎯 止盈点位: {tp}')
-                    print(f'  🛑 止损点位: {sl}')
+                    log_msg = f'[Deepseek] ✅ 提取到入场信号\n  📊 交易对: {symbol} | 方向: {side.upper()}\n  📍 进场点位: {entry}\n  🎯 止盈点位: {tp}\n  🛑 止损点位: {sl}'
+                    print(log_msg)
+                    # 同时写入日志文件（如果 MonitorCog 的 logger 已初始化）
+                    try:
+                        import logging
+                        logger = logging.getLogger('monitor')
+                        if logger.handlers:
+                            logger.info(log_msg)
+                    except:
+                        pass
                 elif result.get('type') == 'update':
                     status = result.get('status', 'N/A')
                     pnl = result.get('pnl_points', 'N/A')
-                    print(f'[Deepseek] ✅ 提取到更新信号')
-                    print(f'  📈 状态: {status}')
+                    log_msg = f'[Deepseek] ✅ 提取到更新信号\n  📈 状态: {status}'
                     if pnl != 'N/A':
-                        print(f'  💰 盈亏点数: {pnl}')
+                        log_msg += f'\n  💰 盈亏点数: {pnl}'
+                    print(log_msg)
+                    # 同时写入日志文件
+                    try:
+                        import logging
+                        logger = logging.getLogger('monitor')
+                        if logger.handlers:
+                            logger.info(log_msg)
+                    except:
+                        pass
             return result
         except Exception as e:
-            print(f'[Deepseek] ❌ 提取异常: {e}')
+            error_msg = f'[Deepseek] ❌ 提取异常: {e}'
+            print(error_msg)
             import traceback
-            traceback.print_exc()
+            tb_str = traceback.format_exc()
+            print(tb_str)
+            # 同时写入日志文件
+            try:
+                import logging
+                logger = logging.getLogger('monitor')
+                if logger.handlers:
+                    logger.error(f'{error_msg}\n{tb_str}')
+            except:
+                pass
             return None

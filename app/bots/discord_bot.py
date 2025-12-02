@@ -178,7 +178,7 @@ class MembershipCog(commands.Cog):
             # 检查所有有该角色的成员
             for member in role.members:
                 user_id = str(member.id)
-                st = self.mgr.get_status(user_id)
+            st = self.mgr.get_status(user_id)
                 
                 # 检查体验权限是否过期（6小时后自动撤销）
                 trial_expired = st.get('trial_end') and st['trial_end'] <= now
@@ -456,14 +456,30 @@ class MonitorCog(commands.Cog):
             full_content = f"[回复消息] {message.content}"
             self._log_event(f'[Monitor] 💬 检测到回复消息，重点关注止盈止损信息')
         
+        # 记录完整原始消息内容
+        import json as json_module
+        self._log_event(f'[Monitor] 📝 原始消息内容: {full_content}')
+        
         # 使用Deepseek解析交易信息
         data = self.ai.extract_trade(full_content)
-        if not isinstance(data, dict) or not data:
+        
+        # 记录 Deepseek 解析结果（无论成功失败）
+        if data and isinstance(data, dict) and data.get('type'):
+            # 解析成功，记录完整 JSON
+            self._log_event(f'[Monitor] 🤖 Deepseek 解析结果: {json_module.dumps(data, ensure_ascii=False, indent=2)}')
+        else:
+            # 解析失败或返回空，记录原因
+            if data is None:
+                self._log_event(f'[Monitor] ⚠️ Deepseek 解析失败: 返回 None（可能是 API 错误）', level=logging.WARNING)
+            elif isinstance(data, dict) and not data:
+                self._log_event(f'[Monitor] ⚠️ Deepseek 解析结果: 空对象 {{}}（未识别为交易信号）')
+            else:
+                self._log_event(f'[Monitor] ⚠️ Deepseek 解析结果异常: {data}', level=logging.WARNING)
+            
             # 检查消息是否包含出局/止盈/止损关键词，如果包含但未提取到，记录日志
             exit_keywords = ['出局', '止盈', '止损', '获利', '亏损', '剩余', '继续持有', '设置止损', '成本价']
             if any(keyword in message.content for keyword in exit_keywords):
                 self._log_event(f'[Monitor] ⚠️ 消息包含出局/止盈/止损关键词，但Deepseek未提取到信息', level=logging.WARNING)
-                self._log_event(f'[Monitor] ⚠️ 原始消息: {message.content[:200]}', level=logging.WARNING)
             if is_reply:
                 self._log_event(f'[Monitor] ⚠️ 回复消息中未提取到交易信息，已跳过', level=logging.WARNING)
             return
@@ -513,19 +529,38 @@ class MonitorCog(commands.Cog):
                 # 处理 webhook 消息的 user_id（webhook 消息可能没有 author.id）
                 user_id = str(getattr(message.author, 'id', message.webhook_id)) if message.webhook_id else str(message.author.id)
                 
-                con.execute(
-                    """
-                    INSERT INTO trades(trader_id, source_message_id, channel_id, user_id, symbol, side, entry_price, take_profit, stop_loss, confidence, created_at)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (trader_id, str(message.id), channel_id, user_id, data.get('symbol'), data.get('side'), data.get('entry_price'), data.get('take_profit'), data.get('stop_loss'), data.get('confidence'), now)
-                )
-                trade_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
-                
-                # 检查币价是否到达入场价
+                # 验证必要字段
                 symbol = data.get('symbol')
-                entry_price = data.get('entry_price')
                 side = data.get('side')
+                entry_price = data.get('entry_price')
+                take_profit = data.get('take_profit')
+                stop_loss = data.get('stop_loss')
+                
+                if not symbol or not side or entry_price is None:
+                    self._log_event(f'[Monitor] ❌ 数据验证失败 - 缺少必要字段: symbol={symbol}, side={side}, entry_price={entry_price}', level=logging.ERROR)
+                    self._log_event(f'[Monitor] ❌ 完整解析数据: {json_module.dumps(data, ensure_ascii=False)}', level=logging.ERROR)
+                    con.rollback()
+                    return
+                
+                try:
+                    con.execute(
+                        """
+                        INSERT INTO trades(trader_id, source_message_id, channel_id, user_id, symbol, side, entry_price, take_profit, stop_loss, confidence, created_at)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                        """,
+                        (trader_id, str(message.id), channel_id, user_id, symbol, side, entry_price, take_profit, stop_loss, data.get('confidence'), now)
+                    )
+                    trade_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    self._log_event(f'[Monitor] 💾 已保存交易记录到数据库 - Trade ID: {trade_id}, 带单员: {trader_name}, 交易对: {symbol}, 方向: {side}, 入场价: {entry_price}, 止盈: {take_profit}, 止损: {stop_loss}')
+                except Exception as e:
+                    self._log_event(f'[Monitor] ❌ 保存交易记录失败: {e}', level=logging.ERROR)
+                    self._log_event(f'[Monitor] ❌ 尝试保存的数据: trader_id={trader_id}, symbol={symbol}, side={side}, entry_price={entry_price}', level=logging.ERROR)
+                    import traceback
+                    self._log_event(f'[Monitor] ❌ 错误堆栈: {traceback.format_exc()}', level=logging.ERROR)
+                    con.rollback()
+                    return
+                
+                # 检查币价是否到达入场价（使用已验证的变量）
                 
                 if symbol and entry_price:
                     current_price = self.okx_cache.get_price(symbol)
@@ -611,6 +646,11 @@ class MonitorCog(commands.Cog):
                 latest_trade = cur.fetchone()
                 trade_ref_id = latest_trade[0] if latest_trade else None
                 
+                if trade_ref_id:
+                    self._log_event(f'[Monitor] 🔗 找到关联交易单 - Trade ID: {trade_ref_id}')
+                else:
+                    self._log_event(f'[Monitor] ⚠️ 未找到关联交易单，仅保存更新记录', level=logging.WARNING)
+                
                 # 保存更新记录
                 # 处理 webhook 消息的 user_id（webhook 消息可能没有 author.id）
                 user_id = str(getattr(message.author, 'id', message.webhook_id)) if message.webhook_id else str(message.author.id)
@@ -622,6 +662,8 @@ class MonitorCog(commands.Cog):
                     """,
                     (trader_id, trade_ref_id, str(message.id), channel_id, user_id, message.content, data.get('pnl_points'), data.get('status'), now)
                 )
+                update_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+                self._log_event(f'[Monitor] 💾 已保存更新记录到数据库 - Update ID: {update_id}, 状态: {data.get("status")}, 关联交易单: {trade_ref_id or "无"}')
                 
                 # 如果找到了对应的交易单，更新其状态
                 if trade_ref_id and latest_trade:
