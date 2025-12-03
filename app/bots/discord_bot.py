@@ -543,8 +543,8 @@ class MonitorCog(commands.Cog):
                     return
                 
                 try:
-                    con.execute(
-                        """
+                con.execute(
+                    """
                         INSERT INTO trades(trader_id, source_message_id, channel_id, user_id, symbol, side, entry_price, take_profit, stop_loss, confidence, created_at)
                         VALUES(?,?,?,?,?,?,?,?,?,?,?)
                         """,
