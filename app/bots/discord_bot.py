@@ -542,6 +542,13 @@ class MonitorCog(commands.Cog):
                     con.rollback()
                     return
                 
+                # 只允许BTC和ETH的交易对
+                allowed_symbols = ['BTC-USDT-SWAP', 'ETH-USDT-SWAP']
+                if symbol not in allowed_symbols:
+                    self._log_event(f'[Monitor] ⏭️ 跳过非BTC/ETH交易对: {symbol} (只记录BTC-USDT-SWAP和ETH-USDT-SWAP)')
+                    con.rollback()
+                    return
+                
                 try:
                     con.execute(
                         """

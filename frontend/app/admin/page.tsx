@@ -394,7 +394,9 @@ export default function AdminPage() {
                       </TableCell>
                       <TableCell>
                         {user.created_at
-                          ? new Date(user.created_at * 1000).toLocaleString("zh-CN")
+                          ? new Date((user.created_at + 8 * 3600) * 1000).toLocaleString("zh-CN", {
+                              timeZone: "Asia/Shanghai",
+                            })
                           : "—"}
                       </TableCell>
                       <TableCell className="text-right">

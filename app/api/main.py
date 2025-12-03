@@ -11,7 +11,7 @@ import sqlite3
 import hashlib
 import secrets
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 
 from app.config.settings import get_settings
@@ -43,6 +43,17 @@ trader_config = TraderConfig()
 store = MembershipStore()
 okx_cache = OKXStateCache()
 okx_cache.start()
+
+# 时间格式化辅助函数（UTC+8）
+def format_datetime_utc8(timestamp: int) -> str:
+    """将时间戳转换为UTC+8时区的字符串格式"""
+    if not timestamp:
+        return ""
+    # 创建UTC+8时区
+    tz_utc8 = timezone(timedelta(hours=8))
+    # 从时间戳创建datetime对象（UTC时间），然后转换为UTC+8
+    dt = datetime.fromtimestamp(timestamp, tz=timezone.utc).astimezone(tz_utc8)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 # 用户认证相关
 USER_DB_PATH = os.path.join(os.path.dirname(store.db_path), "users.db")
@@ -450,7 +461,7 @@ async def get_trades(
                 if price:
                     current_price = float(price)
             
-            created_at_str = datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M:%S")
+            created_at_str = format_datetime_utc8(created_at)
             
             try:
                     # 如果是"待入场"状态，不计算盈亏
@@ -577,7 +588,7 @@ async def get_trade_detail(trade_id: int, user_id: int = Depends(get_current_use
                 "status": update_status or "",
                 "pnl_points": float(update_pnl) if update_pnl else None,
                 "created_at": update_created_at,
-                "created_at_str": datetime.fromtimestamp(update_created_at).strftime("%Y-%m-%d %H:%M:%S") if update_created_at else ""
+                "created_at_str": format_datetime_utc8(update_created_at) if update_created_at else ""
             })
         
         # 获取带单员信息
@@ -594,7 +605,7 @@ async def get_trade_detail(trade_id: int, user_id: int = Depends(get_current_use
             if price:
                 current_price = float(price)
         
-        created_at_str = datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M:%S")
+        created_at_str = format_datetime_utc8(created_at)
         
         trade_data = TradeResponse(
             id=trade_id,
