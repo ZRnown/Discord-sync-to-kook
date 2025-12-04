@@ -178,7 +178,7 @@ class MembershipCog(commands.Cog):
             # 检查所有有该角色的成员
             for member in role.members:
                 user_id = str(member.id)
-            st = self.mgr.get_status(user_id)
+                st = self.mgr.get_status(user_id)
                 
                 # 检查体验权限是否过期（6小时后自动撤销）
                 trial_expired = st.get('trial_end') and st['trial_end'] <= now
@@ -550,8 +550,8 @@ class MonitorCog(commands.Cog):
                     return
                 
                 try:
-                con.execute(
-                    """
+                    con.execute(
+                        """
                         INSERT INTO trades(trader_id, source_message_id, channel_id, user_id, symbol, side, entry_price, take_profit, stop_loss, confidence, created_at)
                         VALUES(?,?,?,?,?,?,?,?,?,?,?)
                         """,
