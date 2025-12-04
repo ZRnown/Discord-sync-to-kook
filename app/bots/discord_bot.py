@@ -178,7 +178,7 @@ class MembershipCog(commands.Cog):
             # 检查所有有该角色的成员
             for member in role.members:
                 user_id = str(member.id)
-                st = self.mgr.get_status(user_id)
+            st = self.mgr.get_status(user_id)
                 
                 # 检查体验权限是否过期（6小时后自动撤销）
                 trial_expired = st.get('trial_end') and st['trial_end'] <= now
@@ -477,9 +477,9 @@ class MonitorCog(commands.Cog):
                 self._log_event(f'[Monitor] ⚠️ Deepseek 解析结果异常: {data}', level=logging.WARNING)
             
             # 检查消息是否包含出局/止盈/止损关键词，如果包含但未提取到，记录日志
-            exit_keywords = ['出局', '止盈', '止损', '获利', '亏损', '剩余', '继续持有', '设置止损', '成本价']
+            exit_keywords = ['出局', '止盈', '止损', '获利', '亏损', '剩余', '继续持有', '设置止损', '成本价', '补仓', '补货', '加仓']
             if any(keyword in message.content for keyword in exit_keywords):
-                self._log_event(f'[Monitor] ⚠️ 消息包含出局/止盈/止损关键词，但Deepseek未提取到信息', level=logging.WARNING)
+                self._log_event(f'[Monitor] ⚠️ 消息包含出局/止盈/止损/补仓关键词，但Deepseek未提取到信息', level=logging.WARNING)
             if is_reply:
                 self._log_event(f'[Monitor] ⚠️ 回复消息中未提取到交易信息，已跳过', level=logging.WARNING)
             return
@@ -550,8 +550,8 @@ class MonitorCog(commands.Cog):
                     return
                 
                 try:
-                    con.execute(
-                        """
+                con.execute(
+                    """
                         INSERT INTO trades(trader_id, source_message_id, channel_id, user_id, symbol, side, entry_price, take_profit, stop_loss, confidence, created_at)
                         VALUES(?,?,?,?,?,?,?,?,?,?,?)
                         """,
@@ -613,6 +613,11 @@ class MonitorCog(commands.Cog):
                 self._log_event(f'  📈 状态: {status}')
                 if pnl_points and pnl_points != 'N/A':
                     self._log_event(f'  💰 盈亏点数: {pnl_points}')
+                
+                # 如果是补仓/补货/加仓信号，特别标注
+                if status and ('补仓' in status or '补货' in status or '加仓' in status):
+                    self._log_event(f'[Monitor] 📥 检测到补仓/补货/加仓信号 - 状态: {status}', level=logging.INFO)
+                    self._log_event(f'[Monitor] 📥 原始消息内容: {message.content}')
                 
                 # 确保表存在
                 con.execute(
