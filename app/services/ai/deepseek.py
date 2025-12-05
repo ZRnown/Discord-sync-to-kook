@@ -21,6 +21,11 @@ class DeepseekClient:
     def extract_trade(self, text: str) -> Optional[Dict]:
         if not self.available():
             return None
+        
+        # 记录输入文本
+        print(f'[Deepseek] 📥 收到解析请求，文本长度: {len(text)} 字符')
+        print(f'[Deepseek] 📝 输入文本内容: {text[:500]}{"..." if len(text) > 500 else ""}')
+        
         prompt = (
             "你是专业的交易文本解析助手。请从中文交易信号或战报中提取结构化字段。\n\n"
             "⚠️ 重要判断规则：\n"
@@ -85,7 +90,12 @@ class DeepseekClient:
                 self.endpoint = self.endpoint.rstrip('/') + '/v1/chat/completions'
                 print(f'[Deepseek] ⚠️ 自动补全端点URL: {self.endpoint}')
             
+            print(f'[Deepseek] 🚀 发送API请求到: {self.endpoint}')
+            print(f'[Deepseek] 📤 请求体大小: {len(str(body))} 字符')
+            
             r = requests.post(self.endpoint, json=body, headers=headers, timeout=30)
+            
+            print(f'[Deepseek] 📥 API响应状态码: {r.status_code}')
             
             if r.status_code != 200:
                 print(f'[Deepseek] ❌ API请求失败: {r.status_code}')
@@ -113,6 +123,10 @@ class DeepseekClient:
                 return None
             
             content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            
+            # 记录 API 响应的完整内容（用于调试）
+            print(f'[Deepseek] 📥 API返回的完整响应: {str(data)[:1000]}{"..." if len(str(data)) > 1000 else ""}')
+            print(f'[Deepseek] 📝 API返回的原始内容: {content[:500]}{"..." if len(content) > 500 else ""}')
             
             # 如果content为空，返回空结果
             if not content or not content.strip():

@@ -442,9 +442,20 @@ class MonitorCog(commands.Cog):
         msg_type = "Webhook" if is_webhook else "用户"
         self._log_event(f'[Monitor] 📨 检测到频道消息 ({msg_type}) - 带单员: {trader_name}({trader_id}), 频道ID: {channel_id}, 发送者: {author_name}')
         
-        if not message.content or not self.settings.MONITOR_PARSE_ENABLED:
+        # 记录消息内容（即使为空也要记录）
+        message_content = message.content or "(消息内容为空)"
+        self._log_event(f'[Monitor] 📝 原始消息内容: {message_content}')
+        
+        if not message.content:
+            self._log_event(f'[Monitor] ⏭️ 跳过处理: 消息内容为空')
             return
+        
+        if not self.settings.MONITOR_PARSE_ENABLED:
+            self._log_event(f'[Monitor] ⏭️ 跳过处理: 消息解析功能已禁用 (MONITOR_PARSE_ENABLED=False)')
+            return
+        
         if not self.ai.available():
+            self._log_event(f'[Monitor] ⏭️ 跳过处理: Deepseek AI 服务不可用', level=logging.WARNING)
             return
         
         # 检查是否是回复/引用消息，如果是，需要特别关注
@@ -456,11 +467,8 @@ class MonitorCog(commands.Cog):
             full_content = f"[回复消息] {message.content}"
             self._log_event(f'[Monitor] 💬 检测到回复消息，重点关注止盈止损信息')
         
-        # 记录完整原始消息内容
-        import json as json_module
-        self._log_event(f'[Monitor] 📝 原始消息内容: {full_content}')
-        
         # 使用Deepseek解析交易信息
+        self._log_event(f'[Monitor] 🤖 开始调用 Deepseek 解析消息...')
         data = self.ai.extract_trade(full_content)
         
         # 记录 Deepseek 解析结果（无论成功失败）
